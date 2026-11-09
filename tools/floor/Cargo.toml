@@ -1,0 +1,12 @@
+[package]
+name = "floor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A bare native window (GDI or OpenGL), to measure what Windows and the graphics driver cost without any UI toolkit."
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+panic = "abort"

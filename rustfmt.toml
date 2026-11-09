@@ -1,0 +1,5 @@
+# Style: compact lines (the code reads as prose), Unix line endings everywhere.
+edition = "2021"
+max_width = 140
+use_small_heuristics = "Max"
+newline_style = "Unix"

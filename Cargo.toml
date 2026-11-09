@@ -1,0 +1,39 @@
+[package]
+name = "catalyx"
+version = "0.3.0"
+edition = "2021"
+description = "CatalyX - a lean, ad-free, fully reversible game booster for Windows"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TheMR-777/CatalyX"
+homepage = "https://github.com/TheMR-777/CatalyX"
+readme = "README.md"
+keywords = ["game-booster", "windows", "performance", "egui", "gaming"]
+categories = ["games", "os::windows-apis", "gui"]
+publish = false
+
+[[bin]]
+name = "catalyx"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.35"
+egui-components = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = { version = "=0.30.13", default-features = false }
+winreg = "0.52"
+png = "0.17"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

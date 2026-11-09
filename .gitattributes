@@ -1,0 +1,8 @@
+# Keep the repository in LF; Windows tools are fine with it.
+* text=auto eol=lf
+*.ico binary
+*.png binary
+*.rs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf

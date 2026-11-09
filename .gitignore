@@ -1,0 +1,17 @@
+# Build output
+/target/
+
+# Private working notes: never committed
+/research/
+
+# Generated artifacts of check runs (screenshots, self-test reports)
+/shots/
+
+# Editors, logs, scratch
+*.log
+*.tmp
+*.orig
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
