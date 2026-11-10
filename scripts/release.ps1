@@ -15,15 +15,17 @@
     6. notes           docs\releases\<version>.md if it exists (otherwise GitHub's generated notes stay)
 
   Bump the version in Cargo.toml and commit FIRST (and write docs\releases\<version>.md). Run it from a normal
-  PowerShell; it takes about 10 minutes, almost all of it waiting for GitHub. -DryRun does steps 0 and 1 only
-  and says what it would do.
+  PowerShell; it takes about 10 minutes, almost all of it waiting for GitHub. -DryRun does steps 0 and 1 only,
+  smoke-tests every read-only GitHub call the later steps make, and says what it would do.
+  -VerifyOnly vX.Y.Z runs just step 5 against a release that is already published.
 
 .EXAMPLE
   .\scripts\release.ps1 -DryRun
   .\scripts\release.ps1
   .\scripts\release.ps1 -SkipChecks        # you just ran check.ps1 yourself
+  .\scripts\release.ps1 -VerifyOnly v0.4.1 # check a published release again
 #>
-param([switch]$DryRun, [switch]$SkipChecks)
+param([switch]$DryRun, [switch]$SkipChecks, [string]$VerifyOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 Set-Location $root
@@ -32,6 +34,36 @@ function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m) { Write-Host "    ok  $m" -ForegroundColor Green }
 function Fail([string]$m) { Write-Host "XX  $m" -ForegroundColor Red; exit 1 }
 function Invoke-Gh { $o = & gh.exe @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $o" }; $o }
+
+# ---- verification of a published release (step 5; also -VerifyOnly) ------------------------------------
+function Test-Published([string]$tag, [string]$ver) {
+  Say 'Verifying the published files'
+  $tmp = Join-Path $env:TEMP "catalyx-release-$ver"; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $tmp | Out-Null
+  $names = (Invoke-Gh release view $tag --repo $repo --json assets --jq '.assets[].name') -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+  foreach ($want in 'catalyx.exe', 'catalyx.exe.sha256', 'catalyx-cli.exe', 'catalyx-cli.exe.sha256') { if ($names -notcontains $want) { Fail "the release is missing $want" } }
+  Invoke-Gh release download $tag --repo $repo --dir $tmp --pattern 'catalyx*' | Out-Null
+  foreach ($n in 'catalyx.exe', 'catalyx-cli.exe') {
+    $want = ((Get-Content (Join-Path $tmp "$n.sha256")) -split '\s+')[0]
+    $got = (Get-FileHash (Join-Path $tmp $n) -Algorithm SHA256).Hash.ToLower()
+    if ($want -ne $got) { Fail "$n does not match its published checksum" }
+    Ok "$n matches its checksum"
+  }
+  function Subsystem([string]$path) { $b = [IO.File]::ReadAllBytes($path); $pe = [BitConverter]::ToInt32($b, 0x3c); [BitConverter]::ToUInt16($b, $pe + 24 + 68) }
+  if ((Subsystem (Join-Path $tmp 'catalyx.exe')) -ne 2) { Fail 'the published catalyx.exe is not a window program' }
+  if ((Subsystem (Join-Path $tmp 'catalyx-cli.exe')) -ne 3) { Fail 'the published catalyx-cli.exe is not a console program' }
+  Ok 'catalyx.exe is a window program, catalyx-cli.exe a console program'
+  $reported = (& (Join-Path $tmp 'catalyx-cli.exe') version).Trim()
+  if ($reported -ne "CatalyX $ver") { Fail "the published program says '$reported', expected 'CatalyX $ver'" }
+  Ok "the published program reports $reported"
+}
+
+$repo0 = $null
+if ($VerifyOnly) {
+  Say "Verifying the published release $VerifyOnly"
+  $repo = (Invoke-Gh repo view --json nameWithOwner --jq .nameWithOwner).Trim()
+  Test-Published $VerifyOnly ($VerifyOnly.TrimStart('v'))
+  exit 0
+}
 
 # ---- 0. preconditions -------------------------------------------------------------------------------------
 Say 'Preconditions'
@@ -56,6 +88,13 @@ if ($SkipChecks) { Write-Host '    --  checks skipped' -ForegroundColor Yellow }
 else { Say 'Checks'; & (Join-Path $PSScriptRoot 'check.ps1'); if ($LASTEXITCODE -ne 0) { Fail 'the checks failed; nothing was pushed' } }
 
 if ($DryRun) {
+  Say 'Smoke-testing the GitHub calls the later steps make (read-only)'
+  $smoke = Invoke-Gh run list --repo $repo --workflow CI --limit 1 --json 'databaseId,headSha,headBranch,status' | ConvertFrom-Json
+  Ok "workflow runs can be listed ($(@($smoke).Count) found)"
+  $last = (Invoke-Gh release list --repo $repo --limit 1 --json tagName --jq '.[0].tagName').Trim()
+  Ok "releases can be read (latest: $last)"
+  $null = Invoke-Gh api user --jq .id
+  Ok 'the signed-in GitHub user can be read (for the no-reply tag identity)'
   Say 'Dry run: would now push main, wait for CI, tag, push the tag, wait for the release build and verify it. Stopping here.'
   exit 0
 }
@@ -68,7 +107,7 @@ if ($LASTEXITCODE -ne 0) { Fail 'git push failed' }
 
 function Find-Run([string]$workflow, [string]$match, [string]$field) {
   for ($i = 0; $i -lt 60; $i++) {
-    $runs = Invoke-Gh run list --repo $repo --workflow $workflow --limit 10 --json databaseId,headSha,headBranch | ConvertFrom-Json
+    $runs = Invoke-Gh run list --repo $repo --workflow $workflow --limit 10 --json 'databaseId,headSha,headBranch' | ConvertFrom-Json
     $hit = $runs | Where-Object { $_.$field -eq $match } | Select-Object -First 1
     if ($hit) { return $hit.databaseId }
     Start-Sleep 3
@@ -97,24 +136,7 @@ if ($LASTEXITCODE -ne 0) { Fail "the release build failed: https://github.com/$r
 Ok "release build passed (run $rel)"
 
 # ---- 5. verify what was published ------------------------------------------------------------------------
-Say 'Verifying the published files'
-$tmp = Join-Path $env:TEMP "catalyx-release-$ver"; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $tmp | Out-Null
-$names = (Invoke-Gh release view $tag --repo $repo --json assets --jq '.assets[].name') -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-foreach ($want in 'catalyx.exe', 'catalyx.exe.sha256', 'catalyx-cli.exe', 'catalyx-cli.exe.sha256') { if ($names -notcontains $want) { Fail "the release is missing $want" } }
-Invoke-Gh release download $tag --repo $repo --dir $tmp --pattern 'catalyx*' | Out-Null
-foreach ($n in 'catalyx.exe', 'catalyx-cli.exe') {
-  $want = ((Get-Content (Join-Path $tmp "$n.sha256")) -split '\s+')[0]
-  $got = (Get-FileHash (Join-Path $tmp $n) -Algorithm SHA256).Hash.ToLower()
-  if ($want -ne $got) { Fail "$n does not match its published checksum" }
-  Ok "$n matches its checksum"
-}
-function Subsystem([string]$path) { $b = [IO.File]::ReadAllBytes($path); $pe = [BitConverter]::ToInt32($b, 0x3c); [BitConverter]::ToUInt16($b, $pe + 24 + 68) }
-if ((Subsystem (Join-Path $tmp 'catalyx.exe')) -ne 2) { Fail 'the published catalyx.exe is not a window program' }
-if ((Subsystem (Join-Path $tmp 'catalyx-cli.exe')) -ne 3) { Fail 'the published catalyx-cli.exe is not a console program' }
-Ok 'catalyx.exe is a window program, catalyx-cli.exe a console program'
-$reported = (& (Join-Path $tmp 'catalyx-cli.exe') version).Trim()
-if ($reported -ne "CatalyX $ver") { Fail "the published program says '$reported', expected 'CatalyX $ver'" }
-Ok "the published program reports $reported"
+Test-Published $tag $ver
 
 # ---- 6. notes ---------------------------------------------------------------------------------------------
 if (Test-Path $notes) {
