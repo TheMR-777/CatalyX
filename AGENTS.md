@@ -27,8 +27,11 @@ cargo fmt                         # CI: cargo fmt --check
 .\target\release\catalyx.exe play "<game>" --dry-run                    # shows the plan, changes nothing
 ```
 
-Before you say a change is done: build, `cargo test`, `cargo clippy` (zero warnings), `cargo fmt`, the
-self-test, and for UI changes a screenshot you have actually looked at. More in `docs/DEVELOPING.md`.
+Before you say a change is done run **`.\scripts\check.ps1`** (format, clippy with warnings denied, tests, build,
+subsystem check, real-window self-test and start-up check; `-Quick` skips the last two), and for UI changes look at
+a screenshot yourself. Other scripts in `scripts/`: `release.ps1` (check, push, CI, tag, verify the published
+files: use it, do not release by hand), `screenshots.ps1`, `click-test.ps1` (real mouse), `startup-profile.ps1`.
+Details in `docs/DEVELOPING.md`.
 
 ## Map
 

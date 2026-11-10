@@ -61,12 +61,27 @@ Pass a path without spaces to `Start-Process -ArgumentList` (or quote it), or th
   wrong, `catalyx desktop restore` (or Task Manager > Run new task > `explorer.exe`).
 - Tests and checks must never hang: give every wait a time limit.
 
-## Releases
+## Tooling (scripts/)
 
-Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which builds `catalyx.exe` in release mode and
-attaches it, with its SHA-256, to a GitHub release. Bump `version` in `Cargo.toml` first, and keep the README
-in step.
+Everything repetitive is a script. They are plain PowerShell, take `-?`/`Get-Help` for details, never touch your
+real settings (they use scratch data) and exit non-zero on failure.
 
+| Script | What it does |
+|---|---|
+| `scripts\check.ps1` | **Every check in one command**: format, clippy (warnings denied), tests, build, "the window program really is a window program", version consistency, then the real-window self-test and a start-up check. `-Quick` skips the last two. |
+| `scripts\release.ps1` | **Ships a release**: preconditions, `check.ps1`, push, wait for CI, tag, wait for the release build, then verify the published files (checksums, subsystems, version) and apply `docs\releases\<version>.md`. `-DryRun` stops before pushing. |
+| `scripts\screenshots.ps1` | Re-shoots every image in `docs/screenshots` the same way every time (demo data, steady meters). `-Only gauge` for one. |
+| `scripts\click-test.ps1` | Drives the **real window with the real mouse**: click the boost control, confirm the summary, game starts, Restore. `-Control all` for the three looks. Leave the PC alone while it runs. |
+| `scripts\startup-profile.ps1` | Median start-up milestones over several launches (`CATALYX_TRACE`). |
+| `scripts\footprint.ps1` | Memory and CPU of a running program (see [FOOTPRINT.md](FOOTPRINT.md)). |
+
+## Releasing
+
+1. Bump `version` in `Cargo.toml` and write `docs\releases\<version>.md`; commit both.
+2. `.\scripts\release.ps1 -DryRun`, then `.\scripts\release.ps1`.
+
+A pushed tag `vX.Y.Z` runs `.github/workflows/release.yml`, which builds `catalyx.exe` and `catalyx-cli.exe`
+and attaches them with their SHA-256 files; the script does the waiting and the verifying.
 ## Regenerating assets
 
 - **Icon:** edit the geometry in `src/gui/mark.rs`, build, then

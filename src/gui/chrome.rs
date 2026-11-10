@@ -93,6 +93,13 @@ impl CatalyxApp {
         let p = self.pal();
         let (_, title, sub, _) = TABS.iter().find(|(t, ..)| *t == self.tab).copied().unwrap();
         let s = self.snap.lock().map(|s| (s.cpu_total, s.mem_used, s.mem_total, s.gpu_total, s.serial)).unwrap_or_default();
+        // Screenshots show steady, believable meters, not whatever this PC happens to be doing right then.
+        let s = if self.opts.screenshot.is_some() || self.opts.tour.is_some() {
+            const GIB: f64 = 1_073_741_824.0;
+            (23.0, (5.7 * GIB) as u64, (15.9 * GIB) as u64, 6.0, 3)
+        } else {
+            s
+        };
         self.drawn.insert("stats");
         let h = TITLEBAR_H;
         let win_w = ui.ctx().content_rect().width();
