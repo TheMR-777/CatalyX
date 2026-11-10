@@ -18,6 +18,26 @@ will differ on yours, mainly because the graphics driver differs.
 | `catalyx watch` (no window) | 1.3 MB | 0.1-0.3% |
 | Guard process (only while the desktop is off) | 1.9 MB | ~0% |
 
+## Startup
+
+Measured with `CATALYX_TRACE=1` (see below) on the same PC. The window appears **fully drawn about 250-285 ms after
+launch**; it is never shown empty.
+
+| Milestone | Time since launch |
+|---|---|
+| program start to "opening the window" | ~3 ms |
+| window and OpenGL context ready | 175-215 ms |
+| fonts, monitor, engine, app state built | ~2 ms |
+| first frame drawn | 200-240 ms |
+| second frame drawn, window shown | 245-285 ms |
+
+Almost all of it is Windows and the graphics driver creating the OpenGL context; CatalyX's own start-up work is a
+few milliseconds. What keeps it smooth: the window is created **hidden** and shown only once two frames are drawn
+(no empty frame, no white flash), the hardware probes (power plans, graphics card, services) start only *after*
+the window is shown so they never compete with the first frames, and `catalyx.exe` is a window program, so
+Windows never opens a terminal for it (the console build, `catalyx-cli.exe`, is a separate file). `CATALYX_TRACE=1`
+appends one line per milestone to `%TEMP%\catalyx-startup.txt`.
+
 ## Where the cost comes from
 
 - **The graphics driver.** A window with an OpenGL context and nothing drawn in it costs 22-35 MB private

@@ -1,6 +1,6 @@
 [package]
 name = "catalyx"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "CatalyX - a lean, ad-free, fully reversible game booster for Windows"
 license = "MIT OR Apache-2.0"
@@ -11,9 +11,19 @@ keywords = ["game-booster", "windows", "performance", "egui", "gaming"]
 categories = ["games", "os::windows-apis", "gui"]
 publish = false
 
+[lib]
+name = "catalyx_core"
+path = "src/lib.rs"
+
+# The window program (no console window, ever)...
 [[bin]]
 name = "catalyx"
 path = "src/main.rs"
+
+# ...and the same program as a console program, for scripts, pipes and agents.
+[[bin]]
+name = "catalyx-cli"
+path = "src/bin/catalyx-cli.rs"
 
 [dependencies]
 eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }

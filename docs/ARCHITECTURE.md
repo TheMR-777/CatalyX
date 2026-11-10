@@ -5,7 +5,10 @@ depending on how it is started. There is no service, no driver and no second pro
 
 ```
 src/
-  main.rs            entry: CLI first, then the window; check runs (--screenshot / --self-test / --tour)
+  lib.rs             the program: CLI first, then the window; check runs (--screenshot / --self-test / --tour)
+  main.rs            front-end 1: catalyx.exe, a window program (no console, never a terminal)
+  bin/catalyx-cli.rs front-end 2: catalyx-cli.exe, the same program as a console program (scripts, pipes, agents)
+  trace.rs           optional start-up timing (CATALYX_TRACE=1)
   cli/               every command (mod = parsing + dispatch; one file per area)
   engine/            the boost engine (own thread): the heart of the program
   config/            settings, presets, the app/service lists, the saved config file

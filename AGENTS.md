@@ -32,7 +32,7 @@ self-test, and for UI changes a screenshot you have actually looked at. More in 
 
 ## Map
 
-`src/main.rs` entry (CLI first, then window) | `src/cli/` commands | `src/engine/` the boost engine (types,
+`src/lib.rs` the program (CLI first, then window), `src/main.rs` the window front-end (no console), `src/bin/catalyx-cli.rs` the console front-end | `src/cli/` commands | `src/engine/` the boost engine (types,
 journal, boost, apply, running, restore, desktop) | `src/config/` settings, presets, lists | `src/gui/` window
 (`pages/`, `chrome.rs`, `theme.rs`, `widgets.rs`, `mark.rs`) | `src/shell.rs` quiet desktop | `src/procs.rs`
 monitor | `src/services.rs` `power.rs` `tweaks.rs` `gpu.rs` Windows operations | `src/ffi.rs` Win32 bindings.
@@ -94,6 +94,8 @@ dark)`. Check every visual change in dark and light and at the minimum size (760
 - Config files and the journal are user data. Never delete or rewrite them in tests; use the scratch folder.
 - Windows PowerShell: there is no `grep`; backticks inside double-quoted strings are escapes (`` `r `` is a
   carriage return); pass paths without spaces (or quote them) to `Start-Process -ArgumentList`.
+- **`catalyx.exe` has no console** (it is a window program, so starting it never opens a terminal). In scripts, tests and agents call `catalyx-cli.exe` for commands: a shell does not wait for `catalyx.exe`, and its output only appears if it can join a terminal. Never make `catalyx.exe` a console program again (CI checks its PE subsystem is 2). Every helper process must be started through `ffi::run_timeout` or with `CREATE_NO_WINDOW`, and scheduled tasks must start `catalyx.exe` (`elevate::gui_exe()`), never the CLI.
+- The window starts hidden and is shown after two frames (`reveal_when_ready`); do not put slow work before that, and do not make check runs (`--screenshot`, `--self-test`, `--tour`) start hidden.
 - The repository is LF (`.gitattributes`, `rustfmt.toml`). Do not write CRLF.
 
 ## Style

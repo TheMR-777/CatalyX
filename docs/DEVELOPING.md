@@ -7,6 +7,14 @@
 - Optional: an NVIDIA card to exercise the graphics features; administrator rights for the features that need
   them.
 
+## Two programs from one source
+
+`src/lib.rs` is the program. `catalyx.exe` (`src/main.rs`) is a Windows *window* program (no console, so starting
+it never opens a terminal; typed in a terminal with a command it joins that terminal and prints there).
+`catalyx-cli.exe` (`src/bin/catalyx-cli.rs`) is the same code as a *console* program: use it in scripts, pipes and
+CI, because a shell waits for it and exit codes, redirects and Ctrl+C behave. Both are built by `cargo build`.
+Start-up timing: set `CATALYX_TRACE=1` and read `%TEMP%\catalyx-startup.txt`.
+
 ## Build and check
 
 ```powershell

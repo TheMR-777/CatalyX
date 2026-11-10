@@ -46,5 +46,9 @@ jobs:
       - name: The program starts and answers
         shell: pwsh
         run: |
-          .\target\release\catalyx.exe version
-          .\target\release\catalyx.exe help | Select-Object -First 3
+          .\target\release\catalyx-cli.exe version
+          .\target\release\catalyx-cli.exe help | Select-Object -First 3
+          # the window front-end must be a window program (subsystem 2): starting it never opens a terminal
+          $b = [IO.File]::ReadAllBytes("target\release\catalyx.exe"); $pe = [BitConverter]::ToInt32($b, 0x3c)
+          $sub = [BitConverter]::ToUInt16($b, $pe + 24 + 68)
+          if ($sub -ne 2) { throw "catalyx.exe has subsystem $sub; expected 2 (window)" }

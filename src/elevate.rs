@@ -93,12 +93,27 @@ fn current_user() -> String {
     }
 }
 
+/// The program the tasks must start: the window program (catalyx.exe), never the console front-end
+/// (catalyx-cli.exe), which would bring a terminal window back. When this is the console front-end, that is
+/// its sibling catalyx.exe.
+pub fn gui_exe() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let stem = exe.file_stem()?.to_string_lossy().to_lowercase();
+    if let Some(base) = stem.strip_suffix("-cli") {
+        let sibling = exe.with_file_name(format!("{base}.exe"));
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
+    Some(exe)
+}
+
 /// Registers (or replaces) a task. Needs administrator rights.
 pub fn create(name: &str, args: &str, at_logon: bool) -> Result<(), String> {
     if !ffi::is_admin() {
         return Err("creating the task needs administrator rights".into());
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = gui_exe().ok_or("cannot tell where this program is")?;
     let xml = task_xml(&exe.to_string_lossy(), args, at_logon, &current_user());
     let path = std::env::temp_dir().join(format!("catalyx-task-{}.xml", std::process::id()));
     // Task Scheduler reads UTF-16 with a byte-order mark.
@@ -127,7 +142,7 @@ pub fn run(name: &str) -> bool {
 /// True when the one-click task exists and starts *this* program (a moved or rebuilt program
 /// must not be launched through a stale task).
 pub fn ui_task_ready() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
+    let Some(exe) = gui_exe() else { return false };
     command_of(TASK_UI).map(|c| c.to_lowercase().contains(&exe.to_string_lossy().to_lowercase())).unwrap_or(false)
 }
 

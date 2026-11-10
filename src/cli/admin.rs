@@ -62,7 +62,7 @@ impl Cli {
             }
             "xml" => {
                 // Exactly what setup registers, for review (and for validating with schtasks).
-                let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                let exe = el::gui_exe().ok_or("cannot tell where this program is")?;
                 let watcher = self.pos.get(2).map(|s| s == "watch").unwrap_or(false);
                 let user =
                     format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());

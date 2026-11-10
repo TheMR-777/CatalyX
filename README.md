@@ -114,7 +114,9 @@ title bar and the page header are one strip. Settings > Appearance, or `catalyx 
 ## Install
 
 **From a release:** download `catalyx.exe` from the [Releases](https://github.com/TheMR-777/CatalyX/releases)
-page. It is a single file; there is no installer and nothing is written outside `%APPDATA%\CatalyX`.
+page. It is a single file; there is no installer and nothing is written outside `%APPDATA%\CatalyX`. It is a
+window program, so starting it never opens a terminal. If you want to script it, also download
+`catalyx-cli.exe`: the same program as a console program (a shell waits for it, pipes and Ctrl+C work).
 
 **From source** (Windows 10/11, a recent stable Rust toolchain with the MSVC target):
 
@@ -131,7 +133,9 @@ so the window opens elevated without a prompt each time; `catalyx elevate remove
 
 ## Using it
 
-Run `catalyx` for the window. Everything is also available from the command line:
+Run `catalyx` for the window. Everything is also available from the command line (`catalyx <command>` works in
+any terminal; use `catalyx-cli <command>` in scripts and from agents, because a shell does not wait for a
+window program):
 
 ```powershell
 catalyx add "C:\Games\Game\game.exe" --name "My Game" --preset max   # add a game

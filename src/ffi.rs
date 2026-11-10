@@ -166,6 +166,43 @@ pub fn hide_own_console() {
 
 #[link(name = "kernel32")]
 extern "system" {
+    fn AttachConsole(process_id: u32) -> BOOL;
+    fn SetStdHandle(which: u32, h: HANDLE) -> BOOL;
+    fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *const c_void,
+        disposition: u32,
+        flags: u32,
+        template: HANDLE,
+    ) -> HANDLE;
+}
+
+/// The window front-end has no console of its own. When it is started from a terminal with a command
+/// (`catalyx status`), join that terminal so the output appears there: attach to the parent's console and
+/// point the standard handles at it (unless the caller already redirected them to a pipe or a file).
+pub fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return; // no parent console (started by double-click, a task, a service): nothing to join
+        }
+        // STD_INPUT_HANDLE = -10, STD_OUTPUT_HANDLE = -11, STD_ERROR_HANDLE = -12
+        for (which, device) in [(-10i32 as u32, "CONIN$"), (-11i32 as u32, "CONOUT$"), (-12i32 as u32, "CONOUT$")] {
+            let h = GetStdHandle(which);
+            if h.is_null() || h as isize == -1 {
+                // GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING
+                let n = CreateFileW(wide(device).as_ptr(), 0xC000_0000, 3, std::ptr::null(), 3, 0, std::ptr::null_mut());
+                if n as isize != -1 && !n.is_null() {
+                    SetStdHandle(which, n);
+                }
+            }
+        }
+    }
+}
+#[link(name = "kernel32")]
+extern "system" {
     fn GetStdHandle(which: u32) -> HANDLE;
     fn SetHandleInformation(h: HANDLE, mask: u32, flags: u32) -> BOOL;
     fn CreateJobObjectW(attrs: *mut c_void, name: *const u16) -> HANDLE;

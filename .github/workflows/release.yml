@@ -28,13 +28,15 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Checksum
+      - name: Checksums
         shell: pwsh
         run: |
-          Copy-Item target\release\catalyx.exe catalyx.exe
-          $h = (Get-FileHash catalyx.exe -Algorithm SHA256).Hash.ToLower()
-          "$h  catalyx.exe" | Set-Content catalyx.exe.sha256 -Encoding ascii
-          $h
+          foreach ($n in 'catalyx', 'catalyx-cli') {
+            Copy-Item "target\release\$n.exe" "$n.exe"
+            $h = (Get-FileHash "$n.exe" -Algorithm SHA256).Hash.ToLower()
+            "$h  $n.exe" | Set-Content "$n.exe.sha256" -Encoding ascii
+            "$n.exe $h"
+          }
 
       - name: Publish
         uses: softprops/action-gh-release@v3
@@ -42,4 +44,6 @@ jobs:
           files: |
             catalyx.exe
             catalyx.exe.sha256
+            catalyx-cli.exe
+            catalyx-cli.exe.sha256
           generate_release_notes: true

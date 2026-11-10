@@ -18,14 +18,18 @@ use serde_json::json;
 use std::time::{Duration, Instant};
 use util::*;
 
+/// True when rgs is a command that prints something, rather than a request to open the window.
+pub fn wants_console(args: &[String]) -> bool {
+    match args.first() {
+        None => false,
+        Some(f) => !(f.eq_ignore_ascii_case("gui") || (f.starts_with("--") && !matches!(f.as_str(), "--help" | "--version" | "-h"))),
+    }
+}
+
 /// Runs a CLI command. `None` means "open the window" (no command, or window-only flags).
 pub fn run(args: &[String]) -> Option<i32> {
-    let first = args.first()?;
-    if first.eq_ignore_ascii_case("gui") {
-        return None;
-    }
-    if first.starts_with("--") && !matches!(first.as_str(), "--help" | "--version" | "-h") {
-        return None; // --screenshot, --self-test, --tab, --theme ... belong to the window.
+    if !wants_console(args) {
+        return None; // no command, "gui", or window-only flags (--screenshot, --self-test, --tab, --theme ...)
     }
     let mut c = Cli::new(args);
     let code = match c.dispatch() {
@@ -190,5 +194,26 @@ impl Cli {
             }
             other => Err(format!("unknown command '{other}'")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn a(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn commands_want_a_console_and_window_requests_do_not() {
+        assert!(!wants_console(&a(&[])), "no arguments opens the window");
+        assert!(!wants_console(&a(&["gui"])));
+        assert!(!wants_console(&a(&["--screenshot", "x.png"])));
+        assert!(!wants_console(&a(&["--self-test", "r.json"])));
+        assert!(wants_console(&a(&["help"])));
+        assert!(wants_console(&a(&["--help"])));
+        assert!(wants_console(&a(&["--version"])));
+        assert!(wants_console(&a(&["play", "My Game"])));
     }
 }

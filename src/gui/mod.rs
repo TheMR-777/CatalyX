@@ -133,6 +133,9 @@ pub struct CatalyxApp {
     pub confirm: Option<pages::Confirm>,
     /// The "don't ask again" box in the boost summary (kept here while that dialog is open).
     pub boost_dont_ask: bool,
+    /// The window starts hidden and is shown after its first frame is drawn (no empty frame on screen).
+    /// 0 = nothing drawn yet, 1 = first frame drawn, 2 = shown.
+    pub reveal_step: u8,
     // checks
     pub drawn: HashSet<&'static str>,
     selftest: Option<crate::selftest::SelfTest>,
@@ -144,10 +147,13 @@ pub struct CatalyxApp {
 
 impl CatalyxApp {
     pub fn new(cc: &eframe::CreationContext<'_>, opts: Options) -> Self {
+        crate::trace::mark("window and GL context ready");
         theme::install_fonts(&cc.egui_ctx);
+        crate::trace::mark("fonts installed");
         let no_save = opts.screenshot.is_some() || opts.tour.is_some() || opts.demo || opts.selftest.is_some();
         let snap = procs::start_monitor();
         let (tx, status) = crate::engine::start(snap.clone());
+        crate::trace::mark("monitor and engine started");
         let mut cfg = if no_save { Config::default() } else { Config::load() };
         if opts.demo && cfg.games.is_empty() {
             pages::demo_data(&mut cfg);
@@ -241,6 +247,7 @@ impl CatalyxApp {
             ui: pages::PageState::default(),
             confirm: None,
             boost_dont_ask: false,
+            reveal_step: if opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some() { 2 } else { 0 },
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
@@ -248,8 +255,12 @@ impl CatalyxApp {
             shot_requested: false,
             tour_step: 0,
         };
-        app.refresh_hardware();
-        app.refresh_services();
+        crate::trace::mark("app state built");
+        if app.reveal_step == 2 {
+            // A check run draws at once and needs the data now; a normal start probes after the window is shown.
+            app.refresh_hardware();
+            app.refresh_services();
+        }
         if !app.cfg.onboarded && !app.no_save {
             app.confirm = Some(pages::Confirm::Welcome);
         }
@@ -260,6 +271,26 @@ impl CatalyxApp {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /// Shows the window once one frame has really been drawn, then starts the hardware probes (so they never
+    /// compete with the first frames). Called at the start of every frame.
+    fn reveal_when_ready(&mut self, ctx: &Context) {
+        match self.reveal_step {
+            0 => {
+                self.reveal_step = 1;
+                ctx.request_repaint(); // make sure a second frame follows the first
+            }
+            1 => {
+                self.reveal_step = 2;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                crate::trace::mark("window shown");
+                self.refresh_hardware();
+                self.refresh_services();
+            }
+            _ => {}
+        }
+    }
 
     pub fn dark_mode(&self) -> bool {
         match self.cfg.appearance.as_str() {
@@ -636,6 +667,8 @@ impl eframe::App for CatalyxApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        crate::trace::frame();
+        self.reveal_when_ready(ui.ctx());
         self.frames = self.frames.max(1);
         self.sync_titlebar();
         let p = self.pal();
@@ -694,6 +727,7 @@ pub fn run(opts: Options) -> Result<(), String> {
             .with_inner_size(vec2(size.0, size.1))
             .with_min_inner_size(vec2(760.0, 560.0))
             .with_decorations(false)
+            .with_visible(opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some())
             .with_icon(app_icon())
             .with_drag_and_drop(true),
         renderer: eframe::Renderer::Glow,
@@ -703,6 +737,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         persist_window: false,
         ..Default::default()
     };
+    crate::trace::mark("opening the window");
     eframe::run_native("CatalyX", native, Box::new(move |cc| Ok(Box::new(CatalyxApp::new(cc, opts))))).map_err(|e| e.to_string())
 }
 
