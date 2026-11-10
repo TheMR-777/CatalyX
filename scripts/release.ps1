@@ -31,20 +31,20 @@ Set-Location $root
 function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m) { Write-Host "    ok  $m" -ForegroundColor Green }
 function Fail([string]$m) { Write-Host "XX  $m" -ForegroundColor Red; exit 1 }
-function Gh { $o = & gh @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $o" }; $o }
+function Invoke-Gh { $o = & gh.exe @args 2>&1; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') failed: $o" }; $o }
 
 # ---- 0. preconditions -------------------------------------------------------------------------------------
 Say 'Preconditions'
 $ver = (Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $tag = "v$ver"
 Ok "version $ver, tag $tag"
-& gh auth status *> $null; if ($LASTEXITCODE -ne 0) { Fail 'gh is not logged in: run `gh auth login`' }
-$repo = (Gh repo view --json nameWithOwner --jq .nameWithOwner).Trim()
+& gh.exe auth status *> $null; if ($LASTEXITCODE -ne 0) { Fail 'gh is not logged in: run `gh auth login`' }
+$repo = (Invoke-Gh repo view --json nameWithOwner --jq .nameWithOwner).Trim()
 Ok "repository $repo"
 if ((git branch --show-current) -ne 'main') { Fail 'not on main' }
 if (git status --porcelain) { Fail 'uncommitted changes: commit them first (the version bump included)' }
 if (git tag --list $tag) { Fail "tag $tag already exists: bump the version in Cargo.toml and commit" }
-& gh release view $tag --repo $repo *> $null; if ($LASTEXITCODE -eq 0) { Fail "a release $tag already exists on GitHub" }
+& gh.exe release view $tag --repo $repo *> $null; if ($LASTEXITCODE -eq 0) { Fail "a release $tag already exists on GitHub" }
 $private = @(git ls-files | Select-String -Pattern '^(research|shots|target)/')
 if ($private.Count -gt 0) { Fail "private or generated files are tracked: $($private -join ', ')" }
 Ok 'clean tree, new tag, nothing private tracked'
@@ -68,7 +68,7 @@ if ($LASTEXITCODE -ne 0) { Fail 'git push failed' }
 
 function Find-Run([string]$workflow, [string]$match, [string]$field) {
   for ($i = 0; $i -lt 60; $i++) {
-    $runs = Gh run list --repo $repo --workflow $workflow --limit 10 --json databaseId,headSha,headBranch | ConvertFrom-Json
+    $runs = Invoke-Gh run list --repo $repo --workflow $workflow --limit 10 --json databaseId,headSha,headBranch | ConvertFrom-Json
     $hit = $runs | Where-Object { $_.$field -eq $match } | Select-Object -First 1
     if ($hit) { return $hit.databaseId }
     Start-Sleep 3
@@ -78,13 +78,13 @@ function Find-Run([string]$workflow, [string]$match, [string]$field) {
 
 Say 'Waiting for CI on this commit'
 $ci = Find-Run 'CI' $sha 'headSha'
-& gh run watch $ci --repo $repo --exit-status *> $null
+& gh.exe run watch $ci --repo $repo --exit-status *> $null
 if ($LASTEXITCODE -ne 0) { Fail "CI failed: https://github.com/$repo/actions/runs/$ci (nothing was tagged)" }
 Ok "CI passed (run $ci)"
 
 # ---- 3. tag -----------------------------------------------------------------------------------------------
 Say "Tag $tag"
-$id = (Gh api user --jq .id).Trim(); $login = (Gh api user --jq .login).Trim()
+$id = (Invoke-Gh api user --jq .id).Trim(); $login = (Invoke-Gh api user --jq .login).Trim()
 git -c "user.name=$login" -c "user.email=$id+$login@users.noreply.github.com" tag -a $tag -m "CatalyX $ver"
 git push origin $tag
 if ($LASTEXITCODE -ne 0) { Fail 'pushing the tag failed' }
@@ -92,16 +92,16 @@ if ($LASTEXITCODE -ne 0) { Fail 'pushing the tag failed' }
 # ---- 4. the release build --------------------------------------------------------------------------------
 Say 'Waiting for the release build'
 $rel = Find-Run 'Release' $tag 'headBranch'
-& gh run watch $rel --repo $repo --exit-status *> $null
+& gh.exe run watch $rel --repo $repo --exit-status *> $null
 if ($LASTEXITCODE -ne 0) { Fail "the release build failed: https://github.com/$repo/actions/runs/$rel (the tag exists; fix, delete the tag and retry)" }
 Ok "release build passed (run $rel)"
 
 # ---- 5. verify what was published ------------------------------------------------------------------------
 Say 'Verifying the published files'
 $tmp = Join-Path $env:TEMP "catalyx-release-$ver"; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $tmp | Out-Null
-$names = (Gh release view $tag --repo $repo --json assets --jq '.assets[].name') -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+$names = (Invoke-Gh release view $tag --repo $repo --json assets --jq '.assets[].name') -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 foreach ($want in 'catalyx.exe', 'catalyx.exe.sha256', 'catalyx-cli.exe', 'catalyx-cli.exe.sha256') { if ($names -notcontains $want) { Fail "the release is missing $want" } }
-Gh release download $tag --repo $repo --dir $tmp --pattern 'catalyx*' | Out-Null
+Invoke-Gh release download $tag --repo $repo --dir $tmp --pattern 'catalyx*' | Out-Null
 foreach ($n in 'catalyx.exe', 'catalyx-cli.exe') {
   $want = ((Get-Content (Join-Path $tmp "$n.sha256")) -split '\s+')[0]
   $got = (Get-FileHash (Join-Path $tmp $n) -Algorithm SHA256).Hash.ToLower()
@@ -119,7 +119,7 @@ Ok "the published program reports $reported"
 # ---- 6. notes ---------------------------------------------------------------------------------------------
 if (Test-Path $notes) {
   Say 'Release notes'
-  Gh release edit $tag --repo $repo --title "CatalyX $ver" --notes-file $notes | Out-Null
+  Invoke-Gh release edit $tag --repo $repo --title "CatalyX $ver" --notes-file $notes | Out-Null
   Ok "notes from docs\releases\$ver.md"
 }
 Write-Host ''
