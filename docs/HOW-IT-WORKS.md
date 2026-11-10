@@ -3,6 +3,8 @@
 Every step below is journaled before it is made and undone afterwards (see [SAFETY.md](SAFETY.md)). The
 order matters: things that can fail cleanly come first, the game starts last.
 
+Before anything is changed, the window shows a short summary of exactly what this boost will do (the same list as the *This boost will* card), with a *Don't ask me again* box. The command line has no prompt; `--dry-run` prints the plan instead.
+
 Settings come from a **preset** (Gentle, Balanced, Max Squeeze, or your own) or from a game's own settings.
 Each step is a switch in Profiles; `catalyx show <preset>` lists them all.
 

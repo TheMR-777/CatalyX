@@ -127,11 +127,12 @@ impl Cli {
         let mut cfg = Config::load();
         if self.pos.len() < 2 {
             println!(
-                "Theme: {}   Mode: {}   Accent: {}   Tint: {}",
+                "Theme: {}   Mode: {}   Accent: {}   Tint: {}   Boost control: {}",
                 cfg.theme,
                 cfg.appearance,
                 cfg.accent,
-                ["off", "subtle", "rich"][(cfg.tint as usize).min(2)]
+                ["off", "subtle", "rich"][(cfg.tint as usize).min(2)],
+                cfg.boost_control
             );
             return Ok(());
         }
@@ -143,16 +144,18 @@ impl Cli {
                 "tint-off" => cfg.tint = 0,
                 "tint-subtle" => cfg.tint = 1,
                 "tint-rich" => cfg.tint = 2,
-                o => return Err(format!("unknown theme, mode or accent '{o}' (looks: focus slate mica; modes: dark light system; accents: default {}; tint-off tint-subtle tint-rich)", config::ACCENT_KEYS.join(" "))),
+                c @ ("bar" | "gauge" | "ring") => cfg.boost_control = c.into(),
+                o => return Err(format!("unknown theme, mode or accent '{o}' (looks: focus slate mica; modes: dark light system; accents: default {}; tint-off tint-subtle tint-rich; boost control: bar gauge ring)", config::ACCENT_KEYS.join(" "))),
             }
         }
         cfg.save();
         println!(
-            "Theme: {}   Mode: {}   Accent: {}   Tint: {}",
+            "Theme: {}   Mode: {}   Accent: {}   Tint: {}   Boost control: {}",
             cfg.theme,
             cfg.appearance,
             cfg.accent,
-            ["off", "subtle", "rich"][(cfg.tint as usize).min(2)]
+            ["off", "subtle", "rich"][(cfg.tint as usize).min(2)],
+            cfg.boost_control
         );
         Ok(())
     }
@@ -167,7 +170,12 @@ impl Cli {
             "keep-off" => cfg.keep_apps_off = on,
             "auto-boost" => cfg.auto_boost_known_games = on,
             "run-as-admin" => cfg.run_as_admin = on,
-            o => return Err(format!("unknown option '{o}' (restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin)")),
+            "confirm-boost" => cfg.confirm_boost = on,
+            o => {
+                return Err(format!(
+                    "unknown option '{o}' (restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin, confirm-boost)"
+                ))
+            }
         }
         cfg.save();
         println!("{name}: {}", if on { "on" } else { "off" });

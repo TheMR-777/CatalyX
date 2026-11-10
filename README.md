@@ -23,7 +23,7 @@ running in the background. No ads, no updater, no tray icon, no telemetry.
 
 ## What it does
 
-When you press **BOOST & play**, CatalyX prepares Windows for the game, starts it, finds the *real* game
+When you press **Boost & play**, CatalyX prepares Windows for the game, starts it, finds the *real* game
 program behind the launcher, and when the game closes it undoes every change. In this order:
 
 1. **Power plan and CPU** - a copy of your own plan with turbo held at its highest allowed level, cores never
@@ -53,6 +53,30 @@ Details with the exact Windows settings involved: [docs/HOW-IT-WORKS.md](docs/HO
   driver's own offset interface. Realtime priority is never offered.
 
 Full model: [docs/SAFETY.md](docs/SAFETY.md).
+
+## The boost control
+
+The one control that starts a boost has three looks, chosen in **Settings > Appearance**. They share one
+state and one set of actions, so they behave identically; they differ only in how they draw:
+
+| Launch bar (default) | Gauge | Power ring |
+|---|---|---|
+| a slim bar along the bottom of the Boost page: the game, a line of status, the action; stage chips and a progress line while it works | a dial whose needle sweeps from NORMAL to BOOSTED as the stages finish | a ring with one segment per stage that fills as each is done |
+
+All three follow your accent colour (the boosted state is the accent, not a fixed green), and all three
+ask first: a short **summary of exactly what will change**, with a *Don't ask me again* box (bring it back
+with Settings > Behaviour > *Ask before boosting*). Restore never asks. From the command line:
+`catalyx theme ring`, `catalyx option confirm-boost off`.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/control-gauge.png" alt="The gauge" width="430"></td>
+<td><img src="docs/screenshots/control-ring.png" alt="The power ring" width="430"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><img src="docs/screenshots/dialog.png" alt="The summary before a boost" width="640"></td>
+</tr>
+</table>
 
 ## Quiet desktop
 

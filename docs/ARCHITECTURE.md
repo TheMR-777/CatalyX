@@ -9,7 +9,7 @@ src/
   cli/               every command (mod = parsing + dispatch; one file per area)
   engine/            the boost engine (own thread): the heart of the program
   config/            settings, presets, the app/service lists, the saved config file
-  gui/               the egui window: pages/, chrome (title bar + sidebar), theme, widgets, the mark
+  gui/               the egui window: pages/, chrome (title bar + sidebar), control (the boost control), theme, widgets, the mark
   shell.rs           the quiet desktop: stop/start explorer.exe, the exit shortcut, the guard
   procs.rs           the process monitor (own thread) and per-process operations
   services.rs        Windows services: list, stop (with dependents), start

@@ -19,7 +19,6 @@ pub enum Ico {
     Info,
     Moon,
     Sun,
-    Restore,
     Power,
 }
 
@@ -163,18 +162,6 @@ pub fn paint(p: &Painter, icon: Ico, rect: Rect, color: Color32) {
                 let d = vec2(a.cos(), a.sin());
                 line(c + d * u * 0.3, c + d * u * 0.44);
             }
-        }
-        Ico::Restore => {
-            let steps = 20;
-            let pts: Vec<Pos2> = (0..=steps)
-                .map(|i| {
-                    let a = std::f32::consts::PI * (1.0 + 1.5 * i as f32 / steps as f32);
-                    c + vec2(a.cos(), a.sin()) * u * 0.36
-                })
-                .collect();
-            path(&pts);
-            let tip = pts[0];
-            path(&[tip + vec2(-u * 0.02, u * 0.2), tip, tip + vec2(-u * 0.2, u * 0.0)]);
         }
         Ico::Power => {
             let steps = 20;

@@ -1,6 +1,7 @@
 //! Settings: look, behaviour, administrator start, the optional background watcher, your data.
 
 use crate::engine::Cmd;
+use crate::gui::control::Style;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::{self, alpha, AccentId, ThemeId};
 use crate::gui::widgets::*;
@@ -121,7 +122,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.label(faint(ui, format!("{} - recolours the BOOST button, selections and switches", accent.label()), 12.0));
+            ui.label(faint(ui, format!("{} - recolours the boost control, selections and switches", accent.label()), 12.0));
 
             ui.add_space(4.0);
             hairline(ui);
@@ -129,6 +130,15 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                 let mut i = (tint as usize).min(2);
                 if segmented(ui, 214.0, &mut i, &theme::TINT_LABELS) {
                     app.cfg.tint = i as u8;
+                    app.mark_dirty();
+                }
+            });
+            hairline(ui);
+            setting_row(ui, "Boost control", "A bar along the bottom, a gauge or a ring. All three do exactly the same thing", |ui| {
+                let mut i = Style::ALL.iter().position(|s| *s == app.control_style()).unwrap_or(0);
+                let labels: Vec<&str> = Style::ALL.iter().map(|s| s.label()).collect();
+                if segmented(ui, 280.0, &mut i, &labels) {
+                    app.cfg.boost_control = Style::ALL[i].key().into();
                     app.mark_dirty();
                 }
             });
@@ -170,6 +180,10 @@ fn behaviour(app: &mut CatalyxApp, ui: &mut Ui) {
             hairline(ui);
             setting_row(ui, "Reopen closed apps afterwards", "Closed apps start again, but unsaved work is gone either way", |ui| {
                 changed |= ui.add(egui_components::Switch::new(&mut app.cfg.reopen_closed_apps)).changed();
+            });
+            hairline(ui);
+            setting_row(ui, "Ask before boosting", "A short summary of what is about to change, with a way to switch it off", |ui| {
+                changed |= ui.add(egui_components::Switch::new(&mut app.cfg.confirm_boost)).changed();
             });
             hairline(ui);
             setting_row(ui, "Boost known games when they start", "Boosts games started outside CatalyX while this window is open", |ui| {

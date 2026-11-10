@@ -1,12 +1,12 @@
 //! Small reusable pieces of the interface. Anything the component library already does well
 //! (buttons, switches, selects, tabs, inputs, dialogs, toasts) comes from `egui_components`;
 //! this file holds what it does not have: cards, chips, stat tiles, meters, the action picker
-//! and the BOOST button.
+//! and the small pieces shared by the pages.
 
 use super::icons::{self, Ico};
 use super::theme::{alpha, mix, pal, Palette};
 use crate::config::ProcAction;
-use egui::{pos2, vec2, Align, Color32, CursorIcon, FontFamily, FontId, Layout, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, Ui};
+use egui::{pos2, vec2, Align, Color32, CursorIcon, FontFamily, FontId, Layout, Rect, Response, RichText, Sense, Stroke, Ui};
 
 /// The one width for drop-downs and segmented controls that sit on the right of a settings row,
 /// so their right and left edges line up all the way down a card.
@@ -222,83 +222,6 @@ pub fn icon_button(ui: &mut Ui, icon: Ico, tip: &str) -> Response {
     }
     icons::paint_at(ui.painter(), icon, rect.center(), 17.0, if resp.hovered() { p.text } else { p.dim });
     resp.on_hover_text(tip)
-}
-
-/// Rounded rectangle outline as a polygon (corner arcs), for gradients.
-fn round_rect_points(r: Rect, radius: f32) -> Vec<Pos2> {
-    let radius = radius.min(r.width() / 2.0).min(r.height() / 2.0);
-    let mut pts = Vec::new();
-    let corners = [
-        (pos2(r.right() - radius, r.top() + radius), -std::f32::consts::FRAC_PI_2),
-        (pos2(r.right() - radius, r.bottom() - radius), 0.0),
-        (pos2(r.left() + radius, r.bottom() - radius), std::f32::consts::FRAC_PI_2),
-        (pos2(r.left() + radius, r.top() + radius), std::f32::consts::PI),
-    ];
-    for (c, start) in corners {
-        for i in 0..=10 {
-            let a = start + std::f32::consts::FRAC_PI_2 * i as f32 / 10.0;
-            pts.push(c + vec2(a.cos(), a.sin()) * radius);
-        }
-    }
-    pts
-}
-
-/// The BOOST button: a soft squircle with a vertical gradient and a sheen. Turns green while a
-/// boost is on ("RESTORE"). One primary action per screen.
-pub fn boost_button(ui: &mut Ui, size: egui::Vec2, title: &str, sub: &str, active: bool, enabled: bool) -> Response {
-    let p = pal(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let hot = resp.hovered() && enabled;
-    let (top, bottom) = if active { (mix(p.ok, Color32::WHITE, 0.2), mix(p.ok, p.bg, 0.2)) } else { (p.boost_top, p.boost_bottom) };
-    let (top, bottom) = if hot { (mix(top, Color32::WHITE, 0.10), mix(bottom, Color32::WHITE, 0.06)) } else { (top, bottom) };
-    let (top, bottom) = if enabled { (top, bottom) } else { (mix(top, p.panel, 0.65), mix(bottom, p.panel, 0.65)) };
-    let draw = if resp.is_pointer_button_down_on() && enabled { rect.shrink(2.0) } else { rect };
-    let radius = (size.x.min(size.y) * 0.24).round();
-
-    // One soft shadow underneath: it lifts the button without a smudgy glow.
-    if enabled {
-        let sh = draw.translate(vec2(0.0, 6.0)).shrink(4.0);
-        ui.painter().add(Shape::convex_polygon(round_rect_points(sh, radius), alpha(bottom, if p.dark { 60 } else { 70 }), Stroke::NONE));
-    }
-    let pts = round_rect_points(draw, radius);
-    let mut mesh = egui::Mesh::default();
-    let centre = draw.center();
-    let col_at = |y: f32| mix(top, bottom, ((y - draw.top()) / draw.height()).clamp(0.0, 1.0));
-    mesh.colored_vertex(centre, col_at(centre.y));
-    for q in &pts {
-        mesh.colored_vertex(*q, col_at(q.y));
-    }
-    let n = pts.len() as u32;
-    for i in 0..n {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
-    }
-    ui.painter().add(Shape::mesh(mesh));
-    // A mesh has hard edges. A thin outline in the same gradient feathers the rounded corners.
-    let (t2, b2, top_y, h_y) = (top, bottom, draw.top(), draw.height());
-    let edge = egui::epaint::PathStroke::new_uv(1.4, move |_r, p| mix(t2, b2, ((p.y - top_y) / h_y).clamp(0.0, 1.0)));
-    ui.painter().add(egui::epaint::PathShape::closed_line(pts.clone(), edge));
-
-    // Icon, title and caption as one block, optically centred.
-    let ink = if enabled { p.on_accent } else { p.faint };
-    icons::paint_at(ui.painter(), if active { Ico::Restore } else { Ico::Bolt }, pos2(centre.x, centre.y - size.y * 0.2), 28.0, ink);
-    ui.painter().text(
-        pos2(centre.x, centre.y + size.y * 0.08),
-        egui::Align2::CENTER_CENTER,
-        title,
-        FontId::new(22.0, FontFamily::Name("bold".into())),
-        ink,
-    );
-    ui.painter().text(
-        pos2(centre.x, centre.y + size.y * 0.24),
-        egui::Align2::CENTER_CENTER,
-        sub,
-        FontId::proportional(12.0),
-        alpha(ink, 210),
-    );
-    if enabled {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-    }
-    resp
 }
 
 /// A friendly empty state.

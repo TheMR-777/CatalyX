@@ -374,7 +374,7 @@ pub fn install_fonts(ctx: &Context) {
 // ------------------------------------------------------------------ accents
 
 /// An accent colour on top of a look. `Default` keeps the look's own accent and surfaces exactly
-/// as designed; every other accent recolours the BOOST button, selections and switches, and lets a
+/// as designed; every other accent recolours the boost control, selections and switches, and lets a
 /// little of its hue bleed into the surfaces (window, sidebar, cards) so the whole app feels of
 /// one colour without any single element shouting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -102,6 +102,8 @@ fn main() {
         theme: arg_after("--theme"),
         appearance: arg_after("--appearance"),
         accent: arg_after("--accent"),
+        control: arg_after("--control"),
+        dialog: arg_after("--dialog"),
         size,
     };
     if let Err(e) = gui::run(opts) {

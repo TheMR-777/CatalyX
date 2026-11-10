@@ -66,6 +66,10 @@ pub struct Config {
     /// How much of the accent bleeds into the surfaces: 0 off, 1 subtle, 2 rich.
     #[serde(default = "default_tint")]
     pub tint: u8,
+    /// The look of the boost control: "bar" (launch bar), "gauge" or "ring" (see gui/control.rs).
+    pub boost_control: String,
+    /// Show a summary of what will change before a boost starts. The summary has a "don't ask again" box.
+    pub confirm_boost: bool,
     /// Missing in files saved before version 2 (reads as 0, not the struct default).
     #[serde(default)]
     pub version: u32,
@@ -99,6 +103,8 @@ impl Default for Config {
             appearance: "dark".into(),
             accent: default_accent(),
             tint: default_tint(),
+            boost_control: BOOST_CONTROL_KEYS[0].into(),
+            confirm_boost: true,
             version: CONFIG_VERSION,
         }
     }
@@ -115,6 +121,9 @@ fn default_tint() -> u8 {
 /// The accent colours a person can pick (besides default, the look's own). The colours
 /// themselves live with the theme code in gui/theme.rs.
 pub const ACCENT_KEYS: [&str; 8] = ["periwinkle", "ember", "copper", "rose", "sage", "ocean", "violet", "gold"];
+
+/// The looks the boost control can have; the first is the default.
+pub const BOOST_CONTROL_KEYS: [&str; 3] = ["bar", "gauge", "ring"];
 
 /// Where settings, the recovery journal and caches live: `%APPDATA%\CatalyX`.
 /// `CATALYX_DATA` (or the older `PUREBOOST_DATA`) points check runs and tests at a scratch folder.

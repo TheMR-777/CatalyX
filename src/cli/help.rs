@@ -43,8 +43,8 @@ SYSTEM
   plans                                  Power plans on this PC
   plan <name|guid>                       Switch power plan now
   gpu                                    Graphics card, offsets and safe steps
-  theme [focus|slate|mica] [dark|light|system] [accent] [tint-off|tint-subtle|tint-rich]
-  option <name> <on|off>                 restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin
+  theme [focus|slate|mica] [dark|light|system] [accent] [tint-off|tint-subtle|tint-rich] [bar|gauge|ring]
+  option <name> <on|off>                 restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin, confirm-boost
   heat-limit <75|80|83|87>               GPU temperature that undoes the overclock
   elevate setup|remove|status            One-click administrator start (one Windows prompt, once)
   autostart on|off|status                Background watcher: boosts your games without a window

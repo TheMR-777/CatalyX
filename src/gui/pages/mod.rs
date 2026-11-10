@@ -9,6 +9,7 @@ pub mod services_page;
 pub mod settings;
 pub mod tuning;
 
+use super::icons::{self, Ico};
 use super::widgets::{bold, faint};
 use super::{CatalyxApp, PickFor};
 use crate::config::{Config, Game, ProcAction};
@@ -26,9 +27,16 @@ pub struct PageState {
 
 pub enum Confirm {
     Welcome,
+    /// The summary shown before a boost starts: the game to start, or none for gaming mode alone.
+    Boost {
+        idx: Option<usize>,
+    },
     RemoveGame(usize),
     ResetConfig,
-    EndApp { exe: String, name: String },
+    EndApp {
+        exe: String,
+        name: String,
+    },
     GpuTest,
     ClearApps,
     ClearServices,
@@ -112,7 +120,7 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                 ui.add_space(6.0);
                 for line in [
                     "Add your games (or let CatalyX find the ones you already have installed).",
-                    "Press BOOST: your power plan, CPU, apps and services are tuned for the game, and put back when it closes.",
+                    "Press Boost & play: your power plan, CPU, apps and services are tuned for the game, and put back when it closes.",
                     "Everything it changes is written down first, so even a crash can be undone with Restore.",
                     "No ads, no updater, no telemetry, no tray icon, no background service.",
                 ] {
@@ -143,7 +151,58 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                 return;
             }
         }
-        Confirm::RemoveGame(i) => {
+        Confirm::Boost { idx } => {
+            let game = idx.and_then(|i| app.cfg.games.get(i)).cloned();
+            let p = app.pal();
+            let (lines, off) = boost::plan_lines(app, game.as_ref());
+            let title = match &game {
+                Some(g) => format!("Boost & play {}?", g.name),
+                None => "Start gaming mode?".to_string(),
+            };
+            let verb = if game.is_some() { "Boost & play" } else { "Boost" };
+            let mut dont = app.boost_dont_ask;
+            let (mut go, mut cancel) = (false, false);
+            Dialog::new(title).width(460.0).show(ctx, &mut open, |ui| {
+                ui.label(faint(ui, "This is what will change on this PC. Everything is put back when the game closes, or when you press Restore.", 12.0));
+                ui.add_space(10.0);
+                for text in &lines {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 22.0), egui::Sense::hover());
+                        icons::paint_at(ui.painter(), Ico::Check, rect.center(), 13.0, p.ok);
+                        ui.label(egui::RichText::new(text).size(14.0));
+                    });
+                }
+                if off > 0 {
+                    ui.add_space(4.0);
+                    ui.label(faint(ui, format!("{off} more option(s) are off"), 12.0));
+                }
+                ui.add_space(14.0);
+                ui.add(egui_components::Checkbox::new(&mut dont, "Don't ask me again"));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.add(Button::primary(verb).large()).clicked() {
+                        go = true;
+                    }
+                    if ui.add(Button::secondary("Cancel").large()).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+            app.boost_dont_ask = dont;
+            if go {
+                if dont {
+                    // The person can bring the summary back in Settings > Behaviour.
+                    app.cfg.confirm_boost = false;
+                    app.mark_dirty();
+                }
+                app.boost_game(*idx);
+                return;
+            }
+            if cancel || !open {
+                return;
+            }
+        }        Confirm::RemoveGame(i) => {
             let name = app.cfg.games.get(*i).map(|g| g.name.clone()).unwrap_or_default();
             match AlertDialog::new(format!("Remove {name}?")).description("Only CatalyX's entry is removed. The game itself is not touched.").confirm_label("Remove").danger().show(ctx, &mut open) {
                 Some(AlertChoice::Confirm) => {

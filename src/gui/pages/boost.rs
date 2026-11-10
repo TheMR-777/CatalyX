@@ -4,6 +4,7 @@
 
 use crate::config::{CpuLevel, GpuLevel, PowerChoice, ProcAction};
 use crate::engine::{Phase, Status};
+use crate::gui::control;
 use crate::gui::icons::{self, Ico};
 use crate::gui::theme::Palette;
 use crate::gui::widgets::*;
@@ -52,15 +53,18 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 }
 
 fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
-    let phase = status.phase;
     let games = app.cfg.games.len();
     let sel = app.cfg.selected_game.min(games.saturating_sub(1));
     let game = app.cfg.games.get(sel).cloned();
     let settings = app.cfg.settings_for(game.as_ref());
+    // The gauge and the ring sit in this card; the launch bar is drawn along the bottom of the page instead.
+    let style = app.control_style();
+    let ctl = control::state(app, status);
+    let dial = style != control::Style::Bar;
+    let mut act: Option<control::Act> = None;
     card(ui, |ui| {
         let inner = ui.available_width();
-        let boost_w = 160.0;
-        let left_w = inner - boost_w - 24.0;
+        let left_w = if dial { inner - control::DIAL_W - 24.0 } else { inner };
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 24.0;
             // ---- left: who, which game, which profile
@@ -146,48 +150,27 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                     );
                 });
             });
-            // ---- right: the one primary action
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let active = phase.active();
-                let label = if active { "RESTORE" } else { "BOOST" };
-                let sub = if active {
-                    "back to normal"
-                } else if games > 0 {
-                    "& play"
-                } else {
-                    "gaming mode"
-                };
-                app.drawn.insert("boost_button");
-                if boost_button(ui, vec2(boost_w, boost_w), label, sub, active, true).clicked() {
-                    if active {
-                        app.restore();
+            // ---- right: the boost control (gauge or ring)
+            if dial {
+                ui.vertical(|ui| {
+                    ui.set_width(control::DIAL_W);
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    app.drawn.insert("boost_control");
+                    act = if style == control::Style::Gauge {
+                        control::gauge(ui, &ctl)
                     } else {
-                        app.boost_game(if games > 0 { Some(sel) } else { None });
-                    }
-                }
-                ui.allocate_ui_with_layout(vec2(boost_w, 28.0), Layout::left_to_right(Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.add_space(14.0);
-                    if ui
-                        .add_enabled(!active, egui::Button::new(faint(ui, "Boost only", 12.0)).frame(false))
-                        .on_hover_text("Tune the PC now without starting a game. Press Restore when done.")
-                        .clicked()
-                    {
-                        app.boost_game(None);
-                    }
-                    ui.add_space(8.0);
-                    ui.label(faint(ui, "\u{00b7}", 12.0));
-                    ui.add_space(8.0);
-                    if ui.add_enabled(active, egui::Button::new(faint(ui, "Restore", 12.0)).frame(false)).clicked() {
-                        app.restore();
-                    }
+                        ui.vertical_centered(|ui| control::ring(ui, &ctl)).inner
+                    };
+                    control::caption(ui, &ctl);
+                    act = act.or(control::boost_only_link(ui, &ctl));
                 });
-            });
+            }
         });
     });
+    if let Some(a) = act {
+        app.control_act(a);
+    }
 }
-
 /// Only what needs attention. Nothing at all when everything is in order.
 fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
     let game = app.cfg.games.get(app.cfg.selected_game).cloned();
@@ -255,14 +238,13 @@ fn power_summary(s: &crate::config::Settings) -> String {
     }
 }
 
-/// What this boost will do: only the things that are switched on.
-fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
-    let p = app.pal();
-    let game = app.cfg.games.get(app.cfg.selected_game).cloned();
-    let s = app.cfg.settings_for(game.as_ref());
-    let rules = app.cfg.apps_for(game.as_ref());
+/// What a boost with these settings will do: the lines for what is switched on, and how many options are off.
+/// Used by the plan card and by the confirmation before a boost starts.
+pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -> (Vec<String>, usize) {
+    let s = app.cfg.settings_for(game);
+    let rules = app.cfg.apps_for(game);
     let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
-    let n_svc = app.cfg.services_for(game.as_ref()).values().filter(|v| **v).count();
+    let n_svc = app.cfg.services_for(game).values().filter(|v| **v).count();
     let mut on: Vec<String> = Vec::new();
     let mut off = 0;
     let mut add = |enabled: bool, text: String| {
@@ -283,6 +265,14 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
     add(s.notifications_off || s.game_dvr_off, "Quiet notifications and recording".into());
     add(s.gpu != GpuLevel::Off, format!("Graphics card: {}", s.gpu.label().to_lowercase()));
     add(s.quiet_desktop && game.is_some(), "Taskbar off while you play (Ctrl+Alt+End brings it back)".into());
+    (on, off)
+}
+
+/// What this boost will do: only the things that are switched on.
+fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
+    let p = app.pal();
+    let game = app.cfg.games.get(app.cfg.selected_game).cloned();
+    let (on, off) = plan_lines(app, game.as_ref());
     let mut edit = false;
     card_titled(
         ui,
@@ -337,7 +327,14 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
         });
         ui.add_space(4.0);
         if !st.game_exe.is_empty() {
-            ui.add(egui::Label::new(RichText::new(format!("{} (pid {})", st.game_exe, st.game_pid)).size(14.0).color(p.accent)).truncate());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(if st.game_pid != 0 { format!("{} (pid {})", st.game_exe, st.game_pid) } else { st.game_exe.clone() })
+                        .size(14.0)
+                        .color(p.accent),
+                )
+                .truncate(),
+            );
         } else if phase == Phase::Finding && !st.game_name.is_empty() {
             ui.add(
                 egui::Label::new(RichText::new(format!("Waiting for {} to start...", st.game_name)).size(14.0).color(p.warn)).truncate(),

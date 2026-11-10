@@ -70,6 +70,10 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
 7. `src/engine/`: apply it (rule 1) and undo it.
 8. Docs: `docs/HOW-IT-WORKS.md` (and `docs/CLI.md` if the help text changed).
 
+## The boost control
+
+A boost is started from exactly one place, `gui/control.rs`, in one of three looks (bar, gauge, ring) that share a Ctl state and the Act actions. Do not start a boost from anywhere else in the window: go through `request_boost` (it shows the summary dialog unless the person turned it off) and `restore` (never confirms). A new look is a new function that takes &Ctl and returns Option<Act>; add its key to `Style`, the Settings row and the CLI `theme` tokens. Boosted colours come from the palette accent, never a fixed hue.
+
 ## Design rules for the window
 
 8-point grid; card padding 20, gap 16, controls 32 px high; four text sizes (12/14/16/22); borders only on

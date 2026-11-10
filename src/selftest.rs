@@ -3,7 +3,7 @@
 //!   move - the pages can be switched and the Apps page lists what is running,
 //!   act  - a real boost of a `.bat` game: the program behind the batch file is found, its
 //!          priority really becomes High (read back from Windows), and is put back afterwards,
-//!   hud  - the live meters, the BOOST button and the session card are drawn.
+//!   hud  - the live meters, the boost control and the session card are drawn.
 //!
 //! It can never hang: every stage has its own time limit, and `finish` is also reached by an
 //! independent watchdog thread (see `main.rs`) that ends the process whatever the window does.
@@ -157,12 +157,12 @@ impl SelfTest {
             3 if self.stage_frames >= 10 => {
                 let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
                 let d = &app.drawn;
-                let ok = d.contains("stats") && d.contains("session") && d.contains("boost_button") && snap.serial >= 2;
+                let ok = d.contains("stats") && d.contains("session") && d.contains("boost_control") && snap.serial >= 2;
                 self.step(
                     "hud",
                     ok,
                     format!(
-                        "CPU {:.0}%, RAM {}, GPU {:.0}% meters, the BOOST button and the session card are drawn ({} apps listed)",
+                        "CPU {:.0}%, RAM {}, GPU {:.0}% meters, the boost control and the session card are drawn ({} apps listed)",
                         snap.cpu_total,
                         procs::fmt_mem(snap.mem_used),
                         snap.gpu_total,

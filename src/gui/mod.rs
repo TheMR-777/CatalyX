@@ -7,6 +7,7 @@
 
 mod checks;
 mod chrome;
+mod control;
 mod icons;
 pub mod mark;
 mod pages;
@@ -83,6 +84,10 @@ pub struct Options {
     pub theme: Option<String>,
     pub appearance: Option<String>,
     pub accent: Option<String>,
+    /// "bar", "gauge" or "ring": the boost control's look, for screenshots.
+    pub control: Option<String>,
+    /// "boost": open the boost summary dialog (for screenshots).
+    pub dialog: Option<String>,
     pub size: Option<(f32, f32)>,
     pub demo: bool,
 }
@@ -126,6 +131,8 @@ pub struct CatalyxApp {
     // page state
     pub ui: pages::PageState,
     pub confirm: Option<pages::Confirm>,
+    /// The "don't ask again" box in the boost summary (kept here while that dialog is open).
+    pub boost_dont_ask: bool,
     // checks
     pub drawn: HashSet<&'static str>,
     selftest: Option<crate::selftest::SelfTest>,
@@ -150,6 +157,12 @@ impl CatalyxApp {
         }
         if let Some(a) = &opts.appearance {
             cfg.appearance = a.to_lowercase();
+        }
+        if opts.dialog.as_deref() == Some("boost") {
+            cfg.onboarded = true;
+        }
+        if let Some(c) = &opts.control {
+            cfg.boost_control = control::Style::from_key(c).key().to_string();
         }
         if let Some(a) = &opts.accent {
             cfg.accent = AccentId::from_key(a).key().to_string();
@@ -227,6 +240,7 @@ impl CatalyxApp {
             trimmed_minimized: false,
             ui: pages::PageState::default(),
             confirm: None,
+            boost_dont_ask: false,
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
@@ -238,6 +252,9 @@ impl CatalyxApp {
         app.refresh_services();
         if !app.cfg.onboarded && !app.no_save {
             app.confirm = Some(pages::Confirm::Welcome);
+        }
+        if app.opts.dialog.as_deref() == Some("boost") {
+            app.confirm = Some(pages::Confirm::Boost { idx: Some(0) });
         }
         app
     }
@@ -637,6 +654,15 @@ impl eframe::App for CatalyxApp {
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(p.sidebar).inner_margin(egui::Margin::symmetric(8, 0)).stroke(egui::Stroke::new(1.0, p.line)))
             .show(ui, |ui| self.sidebar(ui, compact));
+        // The launch bar is pinned to the bottom of the Boost page, before the page itself so it takes its space.
+        if self.tab == Tab::Boost && self.control_style() == control::Style::Bar {
+            egui::Panel::bottom("boost-bar")
+                .exact_size(control::BAR_H)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(p.sidebar))
+                .show(ui, |ui| control::launch_bar(self, ui));
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(egui::Margin { left: 24, right: 24, top: 12, bottom: 16 }))
             .show(ui, |ui| self.body(ui));
