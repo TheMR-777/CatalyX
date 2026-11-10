@@ -15,6 +15,23 @@ footprint of a few MB. It is Windows-only and uses hand-written Win32 FFI.
 | `catalyx` | crate, exe, CLI, `%APPDATA%\CatalyX`, task names `CatalyX` / `CatalyX Watcher` |
 | `CATALYX_DATA` | env var: points config/journal/caches at a scratch folder (`PUREBOOST_DATA` still works) |
 
+## Start here (context you will not otherwise have)
+
+A new session knows nothing about how this project got here. Get the context from disk, in this order:
+
+1. [docs/DECISIONS.md](docs/DECISIONS.md): the choices and *why* (read before changing any behaviour).
+2. [docs/ROADMAP.md](docs/ROADMAP.md): what is **not verified**, known limits, ideas. Do not claim something works
+   in a place it was never tested.
+3. `docs/releases/` and `git log --oneline`: what changed and when.
+4. If the maintainer's private notes exist next to this folder (`..\CatalyX-workbench\CONTEXT.md`), read them too:
+   the maintainer's PC and setup, working preferences, open threads. They are private: never copy from them into
+   tracked files.
+
+How the maintainer likes to work: **show options or mock-ups before building a big UI change** and pick together;
+**ask before publishing or releasing** (then use `scripts\release.ps1`); keep answers plain and honest about what
+was and was not verified; look at screenshots yourself; run long jobs in the background instead of waiting; when a
+chore repeats, make it a script.
+
 ## Commands you will use
 
 ```powershell
