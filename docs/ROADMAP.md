@@ -33,6 +33,9 @@ have not been checked elsewhere.
 
 ## Ideas (not decided)
 
+- **Show what will really change.** The plan card counts the services you ticked, but a service that is not
+  running right now cannot be stopped. Saying "11 of your 48 chosen services are running now" is more honest
+  than a number that quietly shrinks later.
 - **Boost state in the title bar** (a small pill by the meters, visible from every page), or the launch bar on
   every page rather than only on Boost. Mocked as idea 12 in the boost-control exploration.
 - **`windows-sys` for the Win32 bindings** in `ffi.rs`, `shell.rs`, `procs.rs`, `gpu.rs` (type-checked signatures,
