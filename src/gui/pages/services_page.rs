@@ -195,14 +195,22 @@ fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &crate::services::ServiceInfo, game
             set_rule(app, game, &s.name, v);
         }
         x -= 56.0;
-        if let Some(k) = known {
-            let (text, tone) = match (k.impact, k.recommended) {
-                (Impact::Safe, true) => ("Recommended", Tone::Ok),
-                (Impact::Noticeable, true) => ("You may notice", Tone::Warn),
-                (_, false) => ("Optional", Tone::Neutral),
-            };
-            let c = tone_color(&p, tone);
-            let g = ui.painter().layout_no_wrap(text.into(), FontId::proportional(12.0), c);
+        // A service Windows lets nobody start again is never stopped, so say that instead of the
+        // usual advice: the person should not expect this one to go away.
+        let hint: Option<(String, egui::Color32)> = if !crate::services::can_start(&s.name) {
+            Some(("Cannot be started again".into(), p.faint))
+        } else {
+            known.map(|k| {
+                let (text, tone) = match (k.impact, k.recommended) {
+                    (Impact::Safe, true) => ("Recommended", Tone::Ok),
+                    (Impact::Noticeable, true) => ("You may notice", Tone::Warn),
+                    (_, false) => ("Optional", Tone::Neutral),
+                };
+                (text.into(), tone_color(&p, tone))
+            })
+        };
+        if let Some((text, c)) = hint {
+            let g = ui.painter().layout_no_wrap(text, FontId::proportional(12.0), c);
             x -= g.size().x;
             ui.painter().galley(pos2(x, rect.center().y - g.size().y / 2.0), g, c);
             x -= 16.0;
