@@ -17,7 +17,11 @@ A game booster changes things on your PC while you play. The only acceptable ver
 5. **Undo is reverse order and identity-checked.** A process change is only undone on the *same* process (pid
    plus start time), so a recycled process id is never touched. Anything that cannot be undone stays in the
    journal for the next restore instead of being forgotten.
-6. **Small and boring.** Documented Windows controls only. No kernel drivers, no code injection, no hooks, no
+6. **Only make changes that can be undone.** A service that Windows lets you stop but never lets you start
+   again is left running. A change that Windows forbids us to undo (and that only Windows itself can make
+   again) is not made, and a leftover record of one is dropped with a clear note instead of blocking every
+   later restore for ever.
+7. **Small and boring.** Documented Windows controls only. No kernel drivers, no code injection, no hooks, no
    reading or writing another program's memory, no network access, no telemetry.
 
 ## What a boost changes
@@ -53,6 +57,7 @@ A game booster changes things on your PC while you play. The only acceptable ver
 | The quiet desktop was on | restored automatically at the next start, and within seconds by the guard process |
 | Power cut | same as a crash; the journal is on disk |
 | Some change cannot be undone | it stays in the journal and the app says so |
+| A leftover record is one Windows forbids us to undo (a protected service) | the record is dropped with a note, so a restore always finishes |
 
 ## The quiet desktop
 

@@ -244,7 +244,12 @@ pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -
     let s = app.cfg.settings_for(game);
     let rules = app.cfg.apps_for(game);
     let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
-    let n_svc = app.cfg.services_for(game).values().filter(|v| **v).count();
+    let n_svc = app
+        .cfg
+        .services_for(game)
+        .iter()
+        .filter(|(name, on)| **on && !crate::config::service_is_protected(name) && crate::services::can_start(name))
+        .count();
     let mut on: Vec<String> = Vec::new();
     let mut off = 0;
     let mut add = |enabled: bool, text: String| {

@@ -13,6 +13,12 @@ change; if the record cannot be saved the change is not made; undo runs in rever
 **Opt-in, always.** A fresh install closes and stops nothing. "Use the suggestions" is one click and only ever
 lowers or pauses programs that hold data and closes updaters. Never opt anyone in by changing a default.
 
+**Only make changes that can be undone.** Some Windows services can be stopped by anybody but started again
+by nobody but the system (`WdiSystemHost`, `WdiServiceHost` are protected that way). Stopping those would
+leave a change nobody can undo, so CatalyX leaves them running. And a leftover record that Windows forbids
+us to undo is dropped with a clear note rather than kept for ever: a record that can never be undone must
+not block every later restore. `src/services.rs`, `src/engine/apply.rs`, `src/engine/restore.rs`.
+
 **No network, no telemetry, no updater, no tray icon, no background service.** The optional watcher is a
 scheduled task the person chooses; it is a plain process that sleeps between games.
 

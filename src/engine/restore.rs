@@ -23,13 +23,16 @@ impl Engine {
                     None => tweaks::delete(*hive, path, name),
                 },
                 Undo::Task { name, was_enabled } => tweaks::set_task(name, *was_enabled),
-                Undo::Service { name } => match services::start(name) {
-                    Ok(_) => true,
-                    Err(e) => {
-                        self.log(format!("Service {name} could not start again: {e}"));
-                        false
+                Undo::Service { name } => {
+                    // A service that is running again, or that Windows never let us control, has
+                    // nothing left to restore: keeping its record would block every restore for
+                    // ever, so it is dropped with a note.
+                    let out = services::undo_stop(name);
+                    if let Some(note) = &out.note {
+                        self.log(format!("Service {name}: {note}"));
                     }
-                },
+                    out.done
+                }
                 Undo::Resume { pid, start, .. } => !procs::same_process(*pid, *start) || procs::resume(*pid),
                 Undo::Priority { pid, class, start } => !procs::same_process(*pid, *start) || procs::set_priority(*pid, *class),
                 Undo::IoPriority { pid, level, start } => !procs::same_process(*pid, *start) || procs::set_io_priority(*pid, *level),

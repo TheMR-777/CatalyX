@@ -51,8 +51,10 @@ Registry values, each remembered and restored (a value that did not exist is del
 
 **Services** you chose are stopped with their running dependents first, each stop limited to 3 seconds. A
 service that does not stop in time is skipped for the rest of the day (`service_fail.json`). Protected
-services are never touched, and if a dependent is protected the service is left running. Everything that
-was stopped is started again afterwards, in reverse order. Needs administrator rights.
+services are never touched, and if a dependent is protected the service is left running. A service that
+Windows lets you stop but never lets you start again is left running too: a change that cannot be undone
+is not made. Everything that was stopped is started again afterwards, in reverse order. Needs administrator
+rights.
 
 **Apps** each have one of four actions: **Keep** (nothing), **Lower** (lowest CPU priority), **Pause**
 (suspended and resumed afterwards), **Close** (ended). Nothing is selected by default. "Use the suggestions"

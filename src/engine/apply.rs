@@ -162,18 +162,35 @@ impl Engine {
             if already {
                 continue; // stopped earlier in this loop as another service's dependent
             }
+            // A stop may complete even after its 3 s timeout. Record every running dependent
+            // and the parent BEFORE asking Windows to stop any of them.
+            let names: Vec<String> = services::running_dependents(&svc.name).into_iter().chain(std::iter::once(svc.name.clone())).collect();
+            // A service that cannot be started again must never be stopped: Windows protects a
+            // few of them (it lets anybody stop them, but lets nobody start them again), and
+            // then the boost could never be undone. Leave those, and everything that depends on
+            // them, running.
+            let unstartable: Vec<&String> = names.iter().filter(|n| !services::can_start(n)).collect();
+            if !unstartable.is_empty() {
+                let shown = running
+                    .iter()
+                    .find(|r| r.name.eq_ignore_ascii_case(unstartable[0]))
+                    .map(|r| r.display.clone())
+                    .unwrap_or_else(|| unstartable[0].clone());
+                self.log(format!("Service {shown}: Windows does not allow it to be started again, so it is left running"));
+                continue;
+            }
             if self.dry() {
                 self.log(format!("Would stop service {}", svc.display));
                 self.counts(|c| c.planned += 1);
                 continue;
             }
-            // A stop may complete even after its 3 s timeout. Record every running dependent
-            // and the parent BEFORE asking Windows to stop any of them.
-            let names = services::running_dependents(&svc.name).into_iter().chain(std::iter::once(svc.name.clone()));
+            // Services stopped earlier in this boost keep the record they got then.
+            let kept: Vec<String> =
+                names.iter().filter(|n| self.session.as_ref().map(|s| s.stopped_services.contains(*n)).unwrap_or(false)).cloned().collect();
             let mut recorded = true;
-            for name in names {
-                let known = self.session.as_ref().map(|s| s.stopped_services.contains(&name)).unwrap_or(false);
-                if !known && !self.push_undo(Undo::Service { name }) {
+            for name in &names {
+                let known = kept.iter().any(|k| k.eq_ignore_ascii_case(name));
+                if !known && !self.push_undo(Undo::Service { name: name.clone() }) {
                     recorded = false;
                     break;
                 }
@@ -185,24 +202,44 @@ impl Engine {
             // of the day.
             match services::stop_with_dependents(&svc.name, service_is_protected) {
                 Ok(done) => {
-                    for name in done {
+                    for name in &done {
                         stopped += 1;
                         if let Some(s) = &mut self.session {
                             s.stopped_services.insert(name.clone());
                         }
                         let shown =
-                            running.iter().find(|r| r.name.eq_ignore_ascii_case(&name)).map(|r| r.display.clone()).unwrap_or(name.clone());
+                            running.iter().find(|r| r.name.eq_ignore_ascii_case(name)).map(|r| r.display.clone()).unwrap_or(name.clone());
                         if name.eq_ignore_ascii_case(&svc.name) {
                             self.log(format!("Stopped service {shown}"));
                         } else {
                             self.log(format!("Stopped service {shown} (it depends on {})", svc.display));
                         }
                     }
+                    // A service that was recorded but did not stop gets its record back, so a
+                    // failed stop can never leave a boost that "needs restoring" for ever.
+                    self.forget_unstopped_services(&names, &done, &kept);
                 }
-                Err(e) => self.log(format!("Service {}: {e}", svc.display)),
+                Err(e) => {
+                    self.forget_unstopped_services(&names, &[], &kept);
+                    self.log(format!("Service {}: {e}", svc.display));
+                }
             }
         }
         self.counts(|c| c.services_stopped += stopped);
+    }
+
+    /// Takes the recovery records of services that were recorded but did not stop back out of the
+    /// journal: nothing was changed, so there is nothing to undo.
+    fn forget_unstopped_services(&mut self, names: &[String], done: &[String], kept: &[String]) {
+        let missed: Vec<String> = names
+            .iter()
+            .filter(|n| !done.iter().any(|d| d.eq_ignore_ascii_case(n)) && !kept.iter().any(|k| k.eq_ignore_ascii_case(n)))
+            .cloned()
+            .collect();
+        if missed.is_empty() {
+            return;
+        }
+        self.forget_undos(|u| matches!(u, Undo::Service { name } if missed.iter().any(|m| m.eq_ignore_ascii_case(name))));
     }
 
     /// Pids that belong to the game or its launcher chain and must never be touched.

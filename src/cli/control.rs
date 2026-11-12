@@ -72,7 +72,7 @@ impl Cli {
                 .iter()
                 .map(|s| {
                     let stop = rules.iter().find(|(k, _)| k.eq_ignore_ascii_case(&s.name)).map(|(_, v)| *v).unwrap_or(false);
-                    json!({"name": s.name, "display": s.display, "running": s.running, "stop_while_gaming": stop, "protected": config::service_is_protected(&s.name)})
+                    json!({"name": s.name, "display": s.display, "running": s.running, "stop_while_gaming": stop, "protected": config::service_is_protected(&s.name), "can_start_again": services::can_start(&s.name)})
                 })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
@@ -87,6 +87,10 @@ impl Cli {
             }
             let rule = if config::service_is_protected(&s.name) {
                 "kept"
+            } else if stop && !services::can_start(&s.name) {
+                // Windows lets anybody stop it, but lets nobody start it again: stopping it would
+                // leave a change that can never be undone.
+                "safe"
             } else if stop {
                 "stop"
             } else {
