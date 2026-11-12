@@ -1,6 +1,6 @@
 [package]
 name = "catalyx"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "CatalyX - a lean, ad-free, fully reversible game booster for Windows"
 license = "MIT OR Apache-2.0"
