@@ -20,7 +20,7 @@ use crate::tweaks::{self, RegSet};
 use crate::{gpu, launcher, power, services, shell};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use journal::{journal_path, persist_journal};
@@ -65,7 +65,7 @@ pub struct Engine {
 
 pub fn start(snap: SharedSnapshot) -> (Sender<Cmd>, SharedStatus) {
     let (tx, rx) = std::sync::mpsc::channel();
-    let status: SharedStatus = Arc::new(Mutex::new(Status::default()));
+    let status: SharedStatus = Arc::new(StatusCell::new(Status::default()));
     let st = status.clone();
     std::thread::spawn(move || {
         let mut e = Engine { status: st, snap, session: None, lock_handle: 0 };

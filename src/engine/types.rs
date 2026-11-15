@@ -4,7 +4,9 @@ use crate::config::{Game, ProcAction, Settings};
 use crate::tweaks::{Hive, RegValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LockResult, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use super::journal::journal_path;
 
@@ -125,7 +127,82 @@ impl Default for Status {
     }
 }
 
-pub type SharedStatus = Arc<Mutex<Status>>;
+pub type SharedStatus = Arc<StatusCell>;
+
+/// The engine's status plus a change counter and an optional listener, so a reader can learn
+/// that the status changed without polling it.
+pub struct StatusCell {
+    status: Mutex<Status>,
+    rev: AtomicU64,
+    notify: OnceLock<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl StatusCell {
+    pub fn new(status: Status) -> Self {
+        StatusCell { status: Mutex::new(status), rev: AtomicU64::new(0), notify: OnceLock::new() }
+    }
+
+    /// Sets the function called after each change. Only the first call counts (the watcher and
+    /// the command line set none).
+    #[allow(dead_code)] // the core connects to it next (Phase 1a T2)
+    pub fn set_notify(&self, f: impl Fn() + Send + Sync + 'static) {
+        let _ = self.notify.set(Box::new(f));
+    }
+
+    /// How many changes were made so far: a reader compares it with the last value it saw.
+    #[allow(dead_code)] // the core reads it next (Phase 1a T2)
+    pub fn rev(&self) -> u64 {
+        self.rev.load(Ordering::Acquire)
+    }
+
+    /// Locks the status, shaped like `Mutex::lock` so callers keep their `Result` handling. It
+    /// never returns `Err`: a thread that panicked while holding the lock leaves the status
+    /// readable, because a poisoned status must not stop a restore or hide what was changed.
+    pub fn lock(&self) -> LockResult<StatusGuard<'_>> {
+        let guard = self.status.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(StatusGuard { guard: Some(guard), cell: self, touched: false })
+    }
+}
+
+/// A locked status. Reading does nothing special; any mutable access counts as a change, which
+/// is announced once when the guard is dropped.
+pub struct StatusGuard<'a> {
+    /// Always `Some` until `drop`, which takes it out to unlock before calling the listener.
+    guard: Option<MutexGuard<'a, Status>>,
+    cell: &'a StatusCell,
+    touched: bool,
+}
+
+impl Deref for StatusGuard<'_> {
+    type Target = Status;
+    fn deref(&self) -> &Status {
+        self.guard.as_deref().expect("status guard used after unlock")
+    }
+}
+
+impl DerefMut for StatusGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Status {
+        self.touched = true;
+        self.guard.as_deref_mut().expect("status guard used after unlock")
+    }
+}
+
+impl Drop for StatusGuard<'_> {
+    fn drop(&mut self) {
+        // The count moves while the lock is still held, so whoever sees the new count and then
+        // locks also sees the new status.
+        if self.touched {
+            self.cell.rev.fetch_add(1, Ordering::AcqRel);
+        }
+        drop(self.guard.take());
+        // Called after unlocking: the listener may lock the status itself.
+        if self.touched {
+            if let Some(f) = self.cell.notify.get() {
+                f();
+            }
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Undo {
@@ -182,4 +259,85 @@ pub enum Undo {
         #[serde(default)]
         start: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    fn counted_cell() -> (Arc<StatusCell>, Arc<AtomicUsize>) {
+        let cell = Arc::new(StatusCell::new(Status::default()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        cell.set_notify(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+        });
+        (cell, calls)
+    }
+
+    #[test]
+    fn status_read_does_not_bump_rev_or_notify() {
+        let (cell, calls) = counted_cell();
+        let st = cell.lock().map(|s| s.clone()).unwrap_or_default();
+        assert_eq!(st.phase, Phase::Idle);
+        assert_eq!(cell.lock().map(|s| s.phase).unwrap_or(Phase::Boosted), Phase::Idle);
+        assert_eq!(cell.rev(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn status_write_bumps_rev_and_notifies_once() {
+        let (cell, calls) = counted_cell();
+        if let Ok(mut st) = cell.lock() {
+            st.phase = Phase::Boosting;
+        }
+        assert_eq!(cell.rev(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cell.lock().map(|s| s.phase).unwrap_or(Phase::Idle), Phase::Boosting);
+    }
+
+    #[test]
+    fn status_two_writes_in_one_guard_notify_once() {
+        let (cell, calls) = counted_cell();
+        if let Ok(mut st) = cell.lock() {
+            st.phase = Phase::Running;
+            st.log.push("one".into());
+        }
+        assert_eq!(cell.rev(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn status_notifier_runs_after_unlocking() {
+        let cell = Arc::new(StatusCell::new(Status::default()));
+        let unlocked = Arc::new(AtomicUsize::new(0));
+        let (weak, u) = (Arc::downgrade(&cell), unlocked.clone());
+        // try_lock, not lock: a regression must fail the test, not hang it.
+        cell.set_notify(move || {
+            if weak.upgrade().is_some_and(|c| c.status.try_lock().is_ok()) {
+                u.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        if let Ok(mut st) = cell.lock() {
+            st.game_pid = 7;
+        }
+        assert_eq!(unlocked.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn status_poisoned_lock_stays_usable() {
+        let cell = Arc::new(StatusCell::new(Status::default()));
+        let c = cell.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = c.lock();
+            panic!("poison the status lock");
+        })
+        .join();
+        assert!(cell.status.is_poisoned());
+        if let Ok(mut st) = cell.lock() {
+            st.game_pid = 9;
+        }
+        assert_eq!(cell.lock().map(|s| s.game_pid).unwrap_or(0), 9);
+    }
 }

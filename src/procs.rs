@@ -73,6 +73,17 @@ pub fn set_detail(on: bool) {
     DETAIL.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Called by the sampler after each new snapshot, so a listener can react to fresh figures
+/// instead of polling for them.
+static ON_SAMPLE: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+/// Sets the hook the sampler calls after each new snapshot. Only the first call counts: there is
+/// one listener per process (the core).
+#[allow(dead_code)] // the core connects to it next (Phase 1a T2)
+pub fn set_on_sample(f: impl Fn() + Send + Sync + 'static) {
+    let _ = ON_SAMPLE.set(Box::new(f));
+}
+
 /// How often the background sampler refreshes (milliseconds). The window slows it when idle.
 pub fn set_sample_interval(ms: u64) {
     SAMPLE_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
@@ -315,6 +326,10 @@ pub fn start_monitor() -> SharedSnapshot {
             };
             if let Ok(mut s) = out.lock() {
                 *s = snap;
+            }
+            // Outside the snapshot lock: the hook may read the snapshot itself.
+            if let Some(f) = ON_SAMPLE.get() {
+                f();
             }
             // Sleep in short slices, so turning detail on (opening the Apps page, starting a
             // boost) is answered at once instead of after a long idle interval.

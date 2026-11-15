@@ -167,6 +167,7 @@ before a boost) belongs to the core.
 | Hint | Effect in the core |
 |---|---|
 | `Interest(set)` with `Processes`, `GpuLive`, `Services`, `Elevation`, `OwnUsage` | samples only what is shown: per-process detail and 1.5 s sampling, live card readings every 1.5 s, the service list every 5 s, a one-off task check, own memory |
+| `Shown` | the window is on screen: start the hardware probes (power plans, graphics card, services), so they never compete with the first frames |
 | `Minimised(bool)` | 8 s sampling, nothing live, the trim-once-after-minimise |
 | `CloseRequested` | restore first if a boost is on, save, then `Event::ReadyToClose` |
 
