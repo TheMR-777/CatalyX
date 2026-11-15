@@ -37,6 +37,27 @@ bar. Look (Focus/Slate/Mica) x accent x tint x dark/light are four independent c
 **Footprint rules.** Draw only on change, nothing while minimised (and trim once after minimising, because a
 minimised egui window gets no more frames), adaptive monitor sampling, no polling loops. Measured, not assumed.
 
+**The window is one skin over a headless core (decided 2026-11-15; being built, see [ROADMAP.md](ROADMAP.md)).**
+Everything that is not drawing (the engine, config, Windows operations *and* the app logic: boost requests,
+auto-boost, saving, sampling policy, restore-before-close) lives in a core that exposes a read-only view, takes
+intents and emits events. Safety policy (journal first, a summary before a boost, never Realtime) is enforced in the
+core, so no skin can bypass it. **Exactly one GUI skin is compiled in** (plus the CLI): another look is written as
+code and the build is pointed at it by one line in the exe's `Cargo.toml`. There is no runtime skin switching, no
+plugin loader and no `dyn` indirection, so the exe carries only the skin it uses and the split costs nothing at run
+time. Unused skins are type-checked by CI so they do not rot. Gate for the change: exe size, idle and minimised
+memory and CPU, and start-up no worse than before. Why: the look will change again; a redesign should be a new skin,
+not a rewrite of the program's logic.
+
+**The skin owns its customisation.** What a person may change about the look (themes, accents, light mode, where the
+boost control sits and in how many styles...) is declared by the skin as static data and stored per skin; the core
+only stores, validates and exposes those choices (in the view and on the command line) and knows no theme, accent or
+control style itself. Why: so a designer has no limits, and switching skins never clobbers another skin's choices.
+The contract is [SKINS.md](SKINS.md).
+
+**The core keeps working when the window does not draw.** A minimised window gets no frames, so saving, recording a
+learned game program and auto-boosting games started outside CatalyX run on a core thread that sleeps until there
+is real work (the engine, which restores after the game closes, already had its own thread).
+
 ## The boost control
 
 **One control, three looks, one state.** The launch bar, the gauge and the power ring share a `Ctl` state and
