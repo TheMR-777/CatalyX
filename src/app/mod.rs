@@ -14,7 +14,7 @@ mod view;
 pub mod window;
 
 pub use intent::{Event, FrameFacts, Intent, Interest, Tone, Upkeep};
-pub use state::apply_suggestions;
+pub use state::{apply_app_suggestions_to, apply_service_suggestions_to, apply_suggestions, apply_suggestions_to};
 pub use view::View;
 
 use crate::config::{Config, Game};

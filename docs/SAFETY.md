@@ -39,6 +39,13 @@ A game booster changes things on your PC while you play. The only acceptable ver
 | Graphics card clock offsets | offsets read before the change and written back | yes |
 | Windows' shell (quiet desktop) | shell started again as the user | no |
 
+## Changes you make yourself
+
+The Tuning page can switch the active power plan (**Use now**) and build or refresh CatalyX's own plan
+(**Create / refresh the CatalyX plan**) outside a boost. These are explicit, persistent choices, like changing
+the plan in Windows' own settings: they are not journaled, and **Restore** does not undo them. Everything a
+*boost* changes is still journaled and put back.
+
 ## Never touched
 
 - Windows itself and its shell parts, security software, anti-cheat services and drivers' helpers, input

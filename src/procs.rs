@@ -331,7 +331,6 @@ pub fn start_monitor() -> SharedSnapshot {
             if let Ok(mut s) = out.lock() {
                 *s = snap;
             }
-            crate::trace::mark(&format!("TEMP monitor wrote serial {serial}"));
             // Outside the snapshot lock: the hook may read the snapshot itself.
             if let Some(f) = ON_SAMPLE.get() {
                 f();
@@ -366,6 +365,32 @@ fn with_process<T>(pid: u32, access: u32, f: impl FnOnce(HANDLE) -> T) -> Option
 
 pub fn terminate(pid: u32) -> bool {
     with_process(pid, PROCESS_TERMINATE, |h| unsafe { TerminateProcess(h, 1) != 0 }).unwrap_or(false)
+}
+
+/// Ends every running copy of a program by name, but only after checking that each pid still
+/// belongs to the process it was listed as (Windows reuses pids). A fresh scan is made here, off
+/// the window: a list drawn a moment ago may be old or not detailed. Copies whose start time
+/// cannot be read are left alone: CatalyX never ends something it cannot identify.
+pub fn terminate_by_name(name_lower: &str) -> usize {
+    let mut sys = System::new();
+    sys.refresh_processes();
+    let targets: Vec<(u32, u64)> = sys
+        .processes()
+        .values()
+        .filter(|p| p.pid().as_u32() > 4 && p.pid().as_u32() != std::process::id())
+        .filter(|p| p.name().to_lowercase() == name_lower)
+        .map(|p| {
+            let pid = p.pid().as_u32();
+            // Programs running as administrator hide their start time from an ordinary process;
+            // ask Windows for the identity it does share before giving up.
+            let start = match p.start_time() {
+                0 => process_identity(pid).map(|(_, start)| start).unwrap_or(0),
+                start => start,
+            };
+            (pid, start)
+        })
+        .collect();
+    targets.into_iter().filter(|(pid, start)| same_process(*pid, *start) && terminate(*pid)).count()
 }
 
 type NtProcFn = unsafe extern "system" fn(HANDLE) -> i32;

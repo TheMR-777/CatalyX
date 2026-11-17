@@ -14,7 +14,7 @@ pub use presets::*;
 pub use settings::*;
 
 /// Bumped when saved settings need a one-time fix-up on load.
-pub const CONFIG_VERSION: u32 = 5;
+pub const CONFIG_VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(default)]
@@ -80,11 +80,9 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        // Suggestions are visible, but service shutdown is always opt-in.
-        let mut services: BTreeMap<String, bool> = crate::catalog::suggested_services().into_keys().map(|n| (n, false)).collect();
-        for (n, _) in COMMON_SERVICES {
-            services.entry(n.to_string()).or_insert(false);
-        }
+        // Service rules start empty: off is the default, and a recorded `false` is then a real
+        // choice (something the person turned off) which suggestions must never overwrite.
+        let services: BTreeMap<String, bool> = BTreeMap::new();
         Config {
             onboarded: false,
             presets: builtin_presets(),
@@ -169,10 +167,16 @@ impl Config {
         data_dir().join("config.json")
     }
 
-    pub fn load() -> Config {
-        let mut c: Config = std::fs::read_to_string(Self::path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    /// A config read from settings text (the saved file or an imported one). Both go through the
+    /// same migration, so an imported file can never smuggle in an old default.
+    pub fn from_json(text: &str) -> Result<Config, serde_json::Error> {
+        let mut c: Config = serde_json::from_str(text)?;
         c.migrate();
-        c
+        Ok(c)
+    }
+
+    pub fn load() -> Config {
+        std::fs::read_to_string(Self::path()).ok().and_then(|s| Self::from_json(&s).ok()).unwrap_or_default()
     }
 
     fn migrate(&mut self) {
@@ -206,6 +210,15 @@ impl Config {
             for p in c.presets.iter_mut().filter(|p| p.builtin && p.id == PRESET_MAX) {
                 p.settings.quiet_desktop = true;
             }
+            c.version = 5;
+        }
+        // Version 6: old files listed every service CatalyX knew about as `false` (the default),
+        // so a saved `false` could not be told apart from "never answered". Dropping those
+        // defaults keeps every real choice (a `true`, a per-game rule, an unknown hand-written
+        // name) and lets "Use recommendations" fill the rest again. Nothing is stopped by this:
+        // absence and `false` both mean "keep it running".
+        if c.version < 6 {
+            c.services.retain(|name, on| *on || crate::catalog::known_service(name).is_none());
             c.version = CONFIG_VERSION;
         }
         // Make sure the three built-in presets are always there.
@@ -217,6 +230,76 @@ impl Config {
         if !c.presets.iter().any(|p| p.id == c.default_preset) {
             c.default_preset = PRESET_BALANCED.into();
         }
+        // The library may have shrunk since the file was written (or it came from another PC).
+        c.clamp_selected();
+    }
+
+    /// Keeps the remembered game index inside the library. Called after a load/import and after
+    /// every edit, so every reader can trust it.
+    pub fn clamp_selected(&mut self) {
+        self.selected_game = self.selected_game.min(self.games.len().saturating_sub(1));
+    }
+
+    /// The remembered game, if there is one. The index is clamped here too: a list that shrank
+    /// without an edit (a job, a demo) must not point past the end.
+    pub fn selected(&self) -> Option<&Game> {
+        self.games.get(self.selected_game.min(self.games.len().saturating_sub(1)))
+    }
+
+    /// The remembered game's index, clamped the same way (None = no games).
+    pub fn selected_index(&self) -> Option<usize> {
+        (!self.games.is_empty()).then(|| self.selected_game.min(self.games.len() - 1))
+    }
+
+    /// Writes one app choice at one scope. Keep is "no rule" for the global list and "follow the
+    /// global list" for a game, so a game's map only ever holds real differences.
+    pub fn set_app_rule(&mut self, game: Option<usize>, exe: &str, a: ProcAction) {
+        match game {
+            None => {
+                if a == ProcAction::Keep {
+                    self.apps.remove(exe);
+                } else {
+                    self.apps.insert(exe.to_string(), a);
+                }
+            }
+            Some(i) => {
+                let global = self.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
+                let Some(g) = self.games.get_mut(i) else { return };
+                if a == global {
+                    g.apps.remove(exe);
+                } else {
+                    g.apps.insert(exe.to_string(), a);
+                }
+            }
+        }
+    }
+
+    /// Writes one service choice at one scope, case-insensitively (imported files may differ), and
+    /// never stores a game rule that merely repeats the global one.
+    pub fn set_service_rule(&mut self, game: Option<usize>, name: &str, on: bool) {
+        match game {
+            None => {
+                let key = self.services.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
+                self.services.insert(key, on);
+            }
+            Some(i) => {
+                let global = self.services.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false);
+                let Some(g) = self.games.get_mut(i) else { return };
+                g.services.retain(|k, _| !k.eq_ignore_ascii_case(name));
+                if on != global {
+                    g.services.insert(name.to_string(), on);
+                }
+            }
+        }
+    }
+
+    /// The service choice recorded in one scope's own map (None = never answered there).
+    pub fn service_choice(&self, game: Option<usize>, name: &str) -> Option<bool> {
+        let map = match game {
+            None => &self.services,
+            Some(i) => &self.games.get(i)?.services,
+        };
+        map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v)
     }
 
     pub fn save(&self) {
@@ -341,5 +424,41 @@ mod tests {
         assert!(c.services_for(Some(&g))["ExampleService"]);
         assert_eq!(c.apps["example.exe"], ProcAction::Lower);
         assert!(!c.services["ExampleService"]);
+    }
+
+    #[test]
+    fn imported_settings_get_the_same_migration_as_a_saved_file() {
+        // A file written by version 4: Max Squeeze predates the quiet desktop, and the remembered
+        // game points past the end (the library shrank on another PC).
+        let mut old = Config::default();
+        old.version = 4;
+        old.presets.iter_mut().find(|p| p.id == PRESET_MAX).unwrap().settings.quiet_desktop = false;
+        old.games.push(Game { name: "One".into(), ..Default::default() });
+        old.selected_game = 7;
+        let text = serde_json::to_string(&old).unwrap();
+
+        let c = Config::from_json(&text).unwrap();
+        assert!(c.preset(PRESET_MAX).settings.quiet_desktop, "an import is migrated like a load");
+        assert_eq!(c.selected_game, 0, "the remembered game is clamped to the library");
+        assert_eq!(c.selected().map(|g| g.name.as_str()), Some("One"));
+    }
+
+    #[test]
+    fn old_service_defaults_are_not_mistaken_for_choices() {
+        // Version 5 files listed every known service as `false` (the old default), so a saved
+        // false cannot be told apart from "never answered". The upgrade drops those defaults;
+        // a real opt-in, a per-game rule and an unknown hand-written name stay.
+        let mut old = Config::default();
+        old.version = 5;
+        old.services.insert("WSearch".into(), false);
+        old.services.insert("Spooler".into(), true);
+        old.services.insert("SomeCustomService".into(), false);
+        old.games.push(Game { name: "One".into(), ..Default::default() });
+        old.games[0].services.insert("WSearch".into(), false);
+        old.migrate();
+        assert_eq!(old.services.get("WSearch"), None, "a saved default is not a choice");
+        assert_eq!(old.services.get("Spooler"), Some(&true), "an opt-in is kept");
+        assert_eq!(old.services.get("SomeCustomService"), Some(&false), "an unknown rule is kept");
+        assert_eq!(old.games[0].services.get("WSearch"), Some(&false), "a per-game rule is a real choice");
     }
 }

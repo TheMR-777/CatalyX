@@ -259,10 +259,6 @@ pub fn known_service(name: &str) -> Option<&'static KnownService> {
     KNOWN_SERVICES.iter().find(|s| s.name.eq_ignore_ascii_case(name))
 }
 
-pub fn suggested_services() -> std::collections::BTreeMap<String, bool> {
-    KNOWN_SERVICES.iter().map(|s| (s.name.to_string(), s.recommended)).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

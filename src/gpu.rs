@@ -263,6 +263,18 @@ pub fn planned(st: &GpuState, level: GpuLevel) -> (i32, i32) {
     };
     (c.min(st.core.max_khz.max(0)), m.min(st.mem.max_khz.max(0)))
 }
+
+/// One hint for a graphics-card choice, wherever a skin shows it: the exact offsets when this
+/// PC's card reports ranges, the generic description when it does not (or has not been read yet).
+pub fn level_hint(level: GpuLevel, st: Option<&GpuState>) -> String {
+    match st {
+        Some(st) if st.supported && level != GpuLevel::Off => {
+            let (c, m) = planned(st, level);
+            format!("Core +{} / memory +{} MHz", c / 1000, m / 1000)
+        }
+        _ => level.hint().to_string(),
+    }
+}
 fn set_domain(a: &Api, domain: u32, khz: i32) -> Result<(), String> {
     let mut s = blank();
     s.version = V1_SIZE | (1 << 16);
@@ -499,6 +511,18 @@ mod tests {
         let c = card(1_200_000, 1_000_000);
         assert_eq!(planned(&c, GpuLevel::Safe), (50_000, 20_000));
         assert_eq!(planned(&c, GpuLevel::Balanced), (100_000, 40_000));
+    }
+
+    #[test]
+    fn one_hint_is_used_by_every_page() {
+        let c = card(1_200_000, 1_000_000);
+        assert_eq!(level_hint(GpuLevel::Safe, Some(&c)), "Core +50 / memory +20 MHz");
+        assert_eq!(level_hint(GpuLevel::Balanced, Some(&c)), "Core +100 / memory +40 MHz");
+        // Without readings (or with a card that cannot be tuned) the generic words are all we know.
+        assert_eq!(level_hint(GpuLevel::Safe, None), GpuLevel::Safe.hint());
+        assert_eq!(level_hint(GpuLevel::Safe, Some(&GpuState::default())), GpuLevel::Safe.hint());
+        // Off is never described by an offset: there is none.
+        assert_eq!(level_hint(GpuLevel::Off, Some(&c)), GpuLevel::Off.hint());
     }
 
     #[test]

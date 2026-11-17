@@ -3,12 +3,12 @@
 
 use crate::app::Intent;
 use crate::config::{CpuLevel, GpuLevel, PowerChoice};
+use crate::gpu;
 use crate::gui::icons::Ico;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::CatalyxApp;
-use crate::{gpu, power};
 use egui::{vec2, Align, Layout, RichText, Ui};
 
 #[derive(Default)]
@@ -159,11 +159,7 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                             .on_hover_text("Switch Windows to this plan right now")
                             .clicked()
                         {
-                            if power::set_active(&pl.guid) {
-                                app.send(Intent::RefreshHardware);
-                            } else {
-                                app.toast_err("Windows refused the change");
-                            }
+                            app.send(Intent::SetPowerPlan { guid: pl.guid.clone() });
                         }
                     });
                 });
@@ -175,13 +171,7 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                 .clicked()
             {
                 let level = app.v.config.presets[idx].settings.cpu;
-                let cur = power::active().unwrap_or_default();
-                if power::ensure_boost_plan(if level == CpuLevel::Off { CpuLevel::Boost } else { level }, &cur) {
-                    app.toast_ok("CatalyX plan is ready");
-                } else {
-                    app.toast_err("Windows would not create the plan");
-                }
-                app.send(Intent::RefreshHardware);
+                app.send(Intent::CreateBoostPlan { level });
             }
         },
     );
@@ -271,14 +261,8 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
                 ),
                 12.0,
             ));
-            let (sc, sm) = gpu::planned(&st, GpuLevel::Safe);
-            let (bc, bm) = gpu::planned(&st, GpuLevel::Balanced);
             let level = app.v.config.presets[idx].settings.gpu;
-            let hint = match level {
-                GpuLevel::Off => "Clocks untouched".to_string(),
-                GpuLevel::Safe => format!("Core +{} / memory +{} MHz", sc / 1000, sm / 1000),
-                GpuLevel::Balanced => format!("Core +{} / memory +{} MHz", bc / 1000, bm / 1000),
-            };
+            let hint = gpu::level_hint(level, Some(&st));
             setting_row(ui, "Graphics tuning", &hint, |ui| {
                 let mut i = GpuLevel::ALL.iter().position(|x| *x == level).unwrap_or(0);
                 if dropdown(ui, "tune-gpu", CONTROL_W, &mut i, &GpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {

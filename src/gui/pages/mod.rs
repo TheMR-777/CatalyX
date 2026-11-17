@@ -11,7 +11,7 @@ pub mod tuning;
 
 use super::icons::{self, Ico};
 use super::widgets::{bold, faint};
-use super::{CatalyxApp, PickFor};
+use super::{CatalyxApp, EditTarget, PickFor};
 use crate::app::Intent;
 use crate::config::Config;
 use egui::Context;
@@ -39,6 +39,12 @@ pub enum Confirm {
         name: String,
     },
     GpuTest,
+    /// A person's own preset, by id: deleting it moves its games (and the default) back to a
+    /// built-in one.
+    DeletePreset {
+        id: String,
+        name: String,
+    },
     ClearApps,
     ClearServices,
 }
@@ -162,7 +168,6 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                     if i < app.v.config.games.len() {
                         app.edit(move |cfg| {
                             cfg.games.remove(i);
-                            cfg.selected_game = cfg.selected_game.min(cfg.games.len().saturating_sub(1));
                         });
                     }
                     return;
@@ -176,6 +181,8 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                 app.edit(|cfg| {
                     *cfg = Config::default();
                     cfg.onboarded = true;
+                    // The text promises the suggestions, so apply them (they fill, never overwrite).
+                    crate::app::apply_suggestions(cfg);
                 });
                 app.toast_ok("Settings reset");
                 return;
@@ -186,9 +193,8 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         Confirm::EndApp { exe, name } => {
             match AlertDialog::new(format!("End {name} now?")).description("Ends every copy of the program at once. Anything unsaved in it is lost, and CatalyX cannot get it back.").confirm_label("End now").danger().show(ctx, &mut open) {
                 Some(AlertChoice::Confirm) => {
-                    let snap = app.v.snap.clone();
-                    let n = snap.procs.iter().filter(|p| p.name_lower == *exe).map(|p| crate::procs::terminate(p.pid)).filter(|ok| *ok).count();
-                    app.toast_info(format!("Ended {n} process(es) of {name}"));
+                    // Off the UI thread, with a fresh scan and an identity check per process.
+                    app.send(Intent::EndApp { exe: exe.clone(), name: name.clone() });
                     return;
                 }
                 Some(AlertChoice::Cancel) => return,
@@ -205,9 +211,36 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                 None => {}
             }
         }
+        Confirm::DeletePreset { id, name } => match AlertDialog::new(format!("Delete {name}?")).description("Games using it go back to a built-in preset. This cannot be undone.").confirm_label("Delete").danger().show(ctx, &mut open) {
+            Some(AlertChoice::Confirm) => {
+                let id = id.clone();
+                app.edit(move |cfg| {
+                    if let Some(i) = cfg.presets.iter().position(|p| p.id == id && !p.builtin) {
+                        cfg.presets.remove(i);
+                        let fallback = cfg.presets.get(1.min(cfg.presets.len().saturating_sub(1))).map(|p| p.id.clone()).unwrap_or_default();
+                        for g in cfg.games.iter_mut().filter(|g| g.preset == id) {
+                            g.preset = fallback.clone();
+                        }
+                        if cfg.default_preset == id {
+                            cfg.default_preset = fallback;
+                        }
+                    }
+                });
+                app.ui.prof.target = EditTarget::Preset(1.min(app.v.config.presets.len().saturating_sub(1)));
+                return;
+            }
+            Some(AlertChoice::Cancel) => return,
+            None => {}
+        },
         Confirm::ClearApps => match AlertDialog::new("Set every app back to Keep?").description("Clears all app rules (for all games). You can bring the suggestions back with one click.").confirm_label("Clear rules").show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
-                app.edit(|cfg| cfg.apps.clear());
+                app.edit(|cfg| {
+                    // "For all games" has to mean it: per-game rules would otherwise survive.
+                    cfg.apps.clear();
+                    for g in &mut cfg.games {
+                        g.apps.clear();
+                    }
+                });
                 return;
             }
             Some(AlertChoice::Cancel) => return,
@@ -216,8 +249,9 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         Confirm::ClearServices => match AlertDialog::new("Keep every service running?").description("Clears all service rules (for all games).").confirm_label("Clear rules").show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
                 app.edit(|cfg| {
-                    for v in cfg.services.values_mut() {
-                        *v = false;
+                    cfg.services.clear();
+                    for g in &mut cfg.games {
+                        g.services.clear();
                     }
                 });
                 return;

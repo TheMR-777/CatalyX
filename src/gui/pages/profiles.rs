@@ -3,6 +3,7 @@
 
 use crate::config::{CpuLevel, GpuLevel, PowerChoice, Preset, Priority, Settings};
 use crate::gui::icons::Ico;
+use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget};
@@ -198,18 +199,7 @@ fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if !builtin && ui.add(egui_components::Button::ghost("Delete").small()).clicked() {
-                                let id = pr.id.clone();
-                                app.edit(move |cfg| {
-                                    cfg.presets.remove(i);
-                                    let fallback = cfg.presets[1.min(cfg.presets.len() - 1)].id.clone();
-                                    for g in cfg.games.iter_mut().filter(|g| g.preset == id) {
-                                        g.preset = fallback.clone();
-                                    }
-                                    if cfg.default_preset == id {
-                                        cfg.default_preset = fallback;
-                                    }
-                                });
-                                app.ui.prof.target = EditTarget::Preset(1.min(app.v.config.presets.len() - 1));
+                                app.confirm = Some(Confirm::DeletePreset { id: pr.id.clone(), name: pr.name.clone() });
                             }
                             if builtin && ui.add(egui_components::Button::ghost("Reset to built-in").small()).clicked() {
                                 if let Some(b) = crate::config::builtin_presets().into_iter().find(|b| b.id == pr.id) {
@@ -254,7 +244,7 @@ fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
             EditTarget::Game(i) => app.v.config.games[i].custom.clone().unwrap_or_default(),
         };
         let before = s.clone();
-        settings_editor(ui, &mut s, admin, &p);
+        settings_editor(ui, &mut s, admin, &p, app.v.hardware.gpu.as_ref());
         if s != before {
             app.edit(move |cfg| match target {
                 EditTarget::Preset(i) => cfg.presets[i].settings = s,
@@ -266,7 +256,7 @@ fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
 
 /// The full settings form, shared by presets and per-game settings. Returns nothing: the caller
 /// compares before and after.
-pub fn settings_editor(ui: &mut Ui, s: &mut Settings, admin: bool, p: &crate::gui::theme::Palette) {
+pub fn settings_editor(ui: &mut Ui, s: &mut Settings, admin: bool, p: &crate::gui::theme::Palette, gpu: Option<&crate::gpu::GpuState>) {
     let need_admin = if admin { "" } else { " (needs administrator)" };
     let w = CONTROL_W;
     card_titled(
@@ -296,7 +286,7 @@ pub fn settings_editor(ui: &mut Ui, s: &mut Settings, admin: bool, p: &crate::gu
                 }
             });
             hairline(ui);
-            setting_row(ui, "Graphics card tuning", s.gpu.hint(), |ui| {
+            setting_row(ui, "Graphics card tuning", &crate::gpu::level_hint(s.gpu, gpu), |ui| {
                 let mut i = GpuLevel::ALL.iter().position(|x| *x == s.gpu).unwrap_or(0);
                 if dropdown(ui, "pr-gpu", w, &mut i, &GpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
                     s.gpu = GpuLevel::ALL[i];

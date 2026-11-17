@@ -244,6 +244,7 @@ impl CatalyxApp {
                     self.confirm = Some(pages::Confirm::Boost { idx: game });
                 }
                 Event::ReadyToClose => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Event::ReadyToQuit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
         }
     }
@@ -255,6 +256,7 @@ impl CatalyxApp {
             gpu_live: self.tab == Tab::Tuning || self.tab == Tab::Boost,
             services: self.tab == Tab::Services,
             elevation: self.tab == Tab::Settings,
+            own_usage: self.tab == Tab::Settings,
         }
     }
 

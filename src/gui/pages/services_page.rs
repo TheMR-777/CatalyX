@@ -32,20 +32,7 @@ fn set_rule(app: &mut CatalyxApp, game: Option<usize>, name: &str, on: bool) {
 }
 
 fn set_rule_in(cfg: &mut Config, game: Option<usize>, name: &str, on: bool) {
-    match game {
-        None => {
-            let key = cfg.services.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
-            cfg.services.insert(key, on);
-        }
-        Some(i) => {
-            let global = cfg.services.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false);
-            if on == global {
-                cfg.games[i].services.retain(|k, _| !k.eq_ignore_ascii_case(name));
-            } else {
-                cfg.games[i].services.insert(name.to_string(), on);
-            }
-        }
-    }
+    cfg.set_service_rule(game, name, on);
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -109,7 +96,9 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
     let p = app.pal();
     let rules = app.v.config.services_for(game.and_then(|i| app.v.config.games.get(i)));
-    let on_count = rules.values().filter(|v| **v).count();
+    // The same rule the plan and the engine use: a protected service, or one Windows cannot start
+    // again, is never stopped, so it does not count as paused.
+    let on_count = rules.iter().filter(|(name, on)| app.v.service_stops(name, **on)).count();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(RichText::new(format!("{on_count} service(s) pause while you play")).size(12.0).color(p.accent));
@@ -121,12 +110,8 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
                 .on_hover_text("Selects the services that are safe to pause for a play session. Your own choices are kept.")
                 .clicked()
             {
-                // Switches the recommended ones ON (for all games); nothing else is touched.
-                app.edit(|cfg| {
-                    for s in catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended) {
-                        set_rule_in(cfg, None, s.name, true);
-                    }
-                });
+                // Scoped like the switches above: a game gets its own rules, not the global ones.
+                app.edit(move |cfg| crate::app::apply_service_suggestions_to(cfg, game));
                 app.toast_ok("Recommended services selected");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Keep all running").small()).clicked() {
@@ -203,7 +188,7 @@ fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &crate::services::ServiceInfo, game
         x -= 56.0;
         // A service Windows lets nobody start again is never stopped, so say that instead of the
         // usual advice: the person should not expect this one to go away.
-        let hint: Option<(String, egui::Color32)> = if !crate::services::can_start(&s.name) {
+        let hint: Option<(String, egui::Color32)> = if !s.can_start {
             Some(("Cannot be started again".into(), p.faint))
         } else {
             known.map(|k| {

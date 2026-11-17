@@ -55,7 +55,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 
 fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
     let games = app.v.config.games.len();
-    let sel = app.v.config.selected_game.min(games.saturating_sub(1));
+    let sel = app.v.config.selected_index().unwrap_or(0);
     let game = app.v.config.games.get(sel).cloned();
     let settings = app.v.config.settings_for(game.as_ref());
     // The gauge and the ring sit in this card; the launch bar is drawn along the bottom of the page instead.
@@ -177,7 +177,8 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
 }
 /// Only what needs attention. Nothing at all when everything is in order.
 fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
-    let game = app.v.config.games.get(app.v.config.selected_game).cloned();
+    let sel = app.v.config.selected_index();
+    let game = sel.and_then(|i| app.v.config.games.get(i)).cloned();
     let rules = app.v.config.apps_for(game.as_ref());
     let none_apps = rules.values().all(|a| *a == ProcAction::Keep);
     let none_svcs = !app.v.config.services_for(game.as_ref()).values().any(|v| *v);
@@ -222,7 +223,8 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
         Some(Do::Restore) => app.send(Intent::Restore),
         Some(Do::Admin) => super::settings::relaunch_admin(app),
         Some(Do::Suggest) => {
-            super::apply_suggestions(app);
+            // The notice describes the selected game's plan, so the suggestions fill that scope.
+            app.edit(move |cfg| crate::app::apply_suggestions_to(cfg, sel));
             app.toast_ok("Suggestions selected: review them in Apps and Services");
         }
         Some(Do::AddGame) => app.tab = Tab::Games,
@@ -248,13 +250,7 @@ pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -
     let s = app.v.config.settings_for(game);
     let rules = app.v.config.apps_for(game);
     let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
-    let n_svc = app
-        .v
-        .config
-        .services_for(game)
-        .iter()
-        .filter(|(name, on)| **on && !crate::config::service_is_protected(name) && crate::services::can_start(name))
-        .count();
+    let n_svc = app.v.config.services_for(game).iter().filter(|(name, on)| app.v.service_stops(name, **on)).count();
     let mut on: Vec<String> = Vec::new();
     let mut off = 0;
     let mut add = |enabled: bool, text: String| {
@@ -281,7 +277,7 @@ pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -
 /// What this boost will do: only the things that are switched on.
 fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
-    let game = app.v.config.games.get(app.v.config.selected_game).cloned();
+    let game = app.v.config.selected().cloned();
     let (on, off) = plan_lines(app, game.as_ref());
     let mut edit = false;
     card_titled(
@@ -309,8 +305,8 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
         },
     );
     if edit {
-        app.ui.prof.target = match game.as_ref() {
-            Some(g) if g.custom.is_some() => EditTarget::Game(app.v.config.selected_game),
+        app.ui.prof.target = match (app.v.config.selected_index(), game.as_ref()) {
+            (Some(i), Some(g)) if g.custom.is_some() => EditTarget::Game(i),
             _ => EditTarget::Preset(
                 app.v
                     .config

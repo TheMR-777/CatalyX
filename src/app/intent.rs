@@ -1,7 +1,7 @@
 //! What a skin can ask of the core (`Intent`), what the core asks the skin to show (`Event`), and what
 //! the skin tells the core about each frame (`FrameFacts`, the forerunner of the `Hint`s in docs/SKINS.md).
 
-use crate::config::Config;
+use crate::config::{Config, CpuLevel};
 
 /// Every change a person can ask for. Games are still referred to by list index here; ids come with T5.
 pub enum Intent {
@@ -45,6 +45,22 @@ pub enum Intent {
         args: &'static str,
         done: &'static str,
     },
+    /// End every running copy of this program (the person confirmed it). Runs off the UI thread and
+    /// checks each pid's start time before ending it.
+    EndApp {
+        exe: String,
+        name: String,
+    },
+    /// Save, put everything back, then open CatalyX again as administrator and close this copy.
+    RelaunchAdmin,
+    /// Switch Windows to this power plan now (an explicit choice, like Windows' own setting).
+    SetPowerPlan {
+        guid: String,
+    },
+    /// Build or refresh CatalyX's own power plan for this CPU level (Off builds the Boost level).
+    CreateBoostPlan {
+        level: CpuLevel,
+    },
     ExportConfig(String),
     ImportConfig(String),
     /// TRANSITIONAL (Phase 1a T2a, removed in T5): a page edits the config directly. Applied at once,
@@ -74,6 +90,8 @@ pub enum Event {
     },
     /// After a close request: everything is restored and saved; close the window now.
     ReadyToClose,
+    /// The elevated copy is starting: this one saved its changes, put Windows back, and may close.
+    ReadyToQuit,
 }
 
 /// What is on screen, so the core samples only what is shown. About data, not page names.
@@ -87,6 +105,8 @@ pub struct Interest {
     pub services: bool,
     /// Whether the one-click task and the watcher exist.
     pub elevation: bool,
+    /// This window's own memory use (Settings > About).
+    pub own_usage: bool,
 }
 
 /// TRANSITIONAL (Phase 1a T2a, replaced by hints in T2b): what the window knows about this frame.

@@ -6,20 +6,14 @@ use crate::gui::pages::Confirm;
 use crate::gui::theme::{self, alpha, AccentId, ThemeId};
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, PickFor};
-use crate::{config, elevate, ffi, procs};
+use crate::{config, procs};
 use egui::{vec2, RichText, Sense, Stroke, Ui};
 
 /// Opens CatalyX again with administrator rights (through the one-click task when it is set
-/// up, otherwise with one Windows prompt) and closes this copy once the new one is starting.
+/// up, otherwise with one Windows prompt). The core saves and restores first, then closes this copy
+/// once the new one is starting.
 pub fn relaunch_admin(app: &mut CatalyxApp) {
-    let started = elevate::launch_ui_via_task() || ffi::relaunch_elevated();
-    if started {
-        app.send(Intent::Restore);
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        std::process::exit(0);
-    } else {
-        app.toast_err("The administrator prompt was cancelled");
-    }
+    app.send(Intent::RelaunchAdmin);
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -312,7 +306,7 @@ fn about(app: &mut CatalyxApp, ui: &mut Ui) {
         |ui| {
             ui.label(RichText::new("A lean game booster: no ads, no updater, no telemetry, no tray icon, nothing running in the background unless you turn the watcher on.").size(14.0));
             ui.add_space(4.0);
-            let ws = ffi::own_working_set();
+            let ws = app.v.system.own_working_set;
             ui.label(faint(ui, format!("This window uses {} of memory right now.", procs::fmt_mem(ws)), 12.0));
             ui.label(faint(ui, "Every change is written to a recovery journal before it is made, and undone when the game closes - or with `catalyx restore` after a crash.", 12.0));
         },

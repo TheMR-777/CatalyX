@@ -2,12 +2,13 @@
 //! link, probes and their results, the boost policy), and `apply`, which carries out an intent.
 
 use super::intent::{Event, Intent, Tone};
-use super::jobs::Job;
+use super::jobs::{Done, Job};
 use super::view::{Hardware, Library, System, View};
 use crate::config::{Config, Game, ProcAction};
 use crate::engine::{BoostRequest, Cmd, Phase, SharedStatus, Status};
 use crate::procs::{self, SharedSnapshot, Snapshot};
 use crate::services;
+use crate::{elevate, ffi};
 use std::collections::{HashSet, VecDeque};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -31,6 +32,7 @@ pub struct State {
     pub(super) hardware: Arc<Hardware>,
     pub(super) hw_busy: bool,
     pub(super) last_live: Instant,
+    pub(super) last_own: Instant,
     pub(super) services: Arc<Vec<services::ServiceInfo>>,
     pub(super) svc_busy: bool,
     pub(super) last_svc: Option<Instant>,
@@ -82,10 +84,11 @@ impl State {
             hardware: Arc::new(Hardware::default()),
             hw_busy: false,
             last_live: Instant::now() - Duration::from_secs(10),
+            last_own: Instant::now() - Duration::from_secs(10),
             services: Arc::new(Vec::new()),
             svc_busy: false,
             last_svc: None,
-            system: System { admin, elevation: None, elevation_busy: false },
+            system: System { admin, elevation: None, elevation_busy: false, own_working_set: crate::ffi::own_working_set() },
             library: Arc::new(Library::default()),
             auto_ignore: HashSet::new(),
             last_auto_scan: Instant::now(),
@@ -210,10 +213,16 @@ impl State {
             Intent::RefreshServices => self.refresh_services(),
             Intent::TestGraphicsCard => self.test_graphics_card(),
             Intent::RunElevated { args, done } => self.run_elevated(args, done),
+            Intent::EndApp { exe, name } => self.end_app(&exe, &name),
+            Intent::RelaunchAdmin => self.relaunch_admin(),
+            Intent::SetPowerPlan { guid } => self.set_power_plan(guid),
+            Intent::CreateBoostPlan { level } => self.create_boost_plan(level),
             Intent::ExportConfig(path) => self.export_config(&path),
             Intent::ImportConfig(path) => self.import_config(&path),
             Intent::Edit(f) => {
                 f(self.cfg_mut());
+                // The library may have shrunk, or the index may be stale: keep every reader safe.
+                self.cfg_mut().clamp_selected();
                 self.mark_dirty();
             }
         }
@@ -278,6 +287,37 @@ impl State {
         self.wake = true;
     }
 
+    /// Ends a program the person pointed at. The scan is fresh and every pid is checked against its
+    /// start time, so a recycled id is never touched; it all happens on a job thread.
+    fn end_app(&mut self, exe: &str, name: &str) {
+        let exe = exe.to_string();
+        let name = name.to_string();
+        self.spawn(move || Some(Done::EndedApp { name, count: procs::terminate_by_name(&exe) }));
+    }
+
+    /// Opens the elevated copy. Pending changes are written first (the old copy used to exit and
+    /// lose them), Windows is put back before the window goes, and the launch runs on a job thread
+    /// so a UAC prompt never freezes the window.
+    fn relaunch_admin(&mut self) {
+        self.save_now();
+        self.restore();
+        let status = self.status.clone();
+        self.spawn(move || {
+            let started = elevate::launch_ui_via_task() || ffi::relaunch_elevated();
+            if !started {
+                return Some(Done::Relaunch(false));
+            }
+            // Let the restore finish rather than ending the process in the middle of it; the new
+            // copy then gets the same short head start the old code gave it.
+            let t = Instant::now();
+            while status.lock().map(|s| s.phase.active()).unwrap_or(false) && t.elapsed() < Duration::from_secs(20) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            std::thread::sleep(Duration::from_millis(400));
+            Some(Done::Relaunch(true))
+        });
+    }
+
     /// Adds a game from a path or store link (used by the form, drag-and-drop and the importer).
     fn add_game(&mut self, path: &str, name: Option<String>, real_exe: Option<String>) {
         let path = path.trim().trim_matches('"').to_string();
@@ -333,7 +373,7 @@ impl State {
     fn import_config(&mut self, path: &str) {
         match std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
-            .and_then(|t| serde_json::from_str::<Config>(&t).map_err(|e| format!("not a CatalyX settings file: {e}")))
+            .and_then(|t| Config::from_json(&t).map_err(|e| format!("not a CatalyX settings file: {e}")))
         {
             Ok(c) => {
                 let (g, p) = (c.games.len(), c.presets.len());
@@ -354,18 +394,47 @@ impl State {
     }
 }
 
-/// Selects the catalog's gentle suggestions (for all games). Choices the person already made
-/// are never overwritten.
+/// Selects the catalog's gentle suggestions for every game. Choices the person already made are
+/// never overwritten.
 pub fn apply_suggestions(cfg: &mut Config) {
+    apply_suggestions_to(cfg, None);
+}
+
+/// Selects the catalog's gentle suggestions for one scope (None = all games). App suggestions only
+/// fill actions still on Keep; service suggestions only fill services nobody has answered for.
+pub fn apply_suggestions_to(cfg: &mut Config, game: Option<usize>) {
+    apply_app_suggestions_to(cfg, game);
+    apply_service_suggestions_to(cfg, game);
+}
+
+/// The app half of `apply_suggestions_to`: never touches a program that already has an action,
+/// whether the rule sits on the game or in the global list.
+pub fn apply_app_suggestions_to(cfg: &mut Config, game: Option<usize>) {
+    let current = cfg.apps_for(game.and_then(|i| cfg.games.get(i)));
     for (exe, a) in crate::catalog::suggested_apps() {
-        let cur = cfg.apps.get(&exe).copied().unwrap_or(ProcAction::Keep);
-        if cur == ProcAction::Keep {
-            cfg.apps.insert(exe, a);
+        // A game's own rule is always explicit, even when it says Keep (the game map only stores
+        // differences); a global Keep is the unanswered state, where suggestions may fill in.
+        let explicit = game.and_then(|i| cfg.games.get(i)).map(|g| g.apps.contains_key(&exe)).unwrap_or(false);
+        if current.get(&exe).copied().unwrap_or(ProcAction::Keep) == ProcAction::Keep && !explicit {
+            cfg.set_app_rule(game, &exe, a);
         }
     }
+}
+
+/// The service half: an answer recorded in this scope is the person's choice and stays as it is.
+/// For a game, an answer recorded globally counts too: the game map only holds differences, so
+/// silence there means "follow the global list", not "nobody has answered".
+pub fn apply_service_suggestions_to(cfg: &mut Config, game: Option<usize>) {
     for s in crate::catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended) {
-        let key = cfg.services.keys().find(|k| k.eq_ignore_ascii_case(s.name)).cloned().unwrap_or_else(|| s.name.to_string());
-        cfg.services.insert(key, true);
+        // Windows protects these: they are never stopped, so a rule for one would only be noise.
+        if crate::config::service_is_protected(s.name) {
+            continue;
+        }
+        let answered_here = cfg.service_choice(game, s.name).is_some();
+        let answered_globally = game.is_some() && cfg.service_choice(None, s.name).is_some();
+        if !answered_here && !answered_globally {
+            cfg.set_service_rule(game, s.name, true);
+        }
     }
 }
 
@@ -487,5 +556,53 @@ mod tests {
         st.apply(Intent::Restore);
         assert!(matches!(rx.try_recv(), Ok(Cmd::Restore)));
         assert!(st.take_events().is_empty());
+    }
+
+    #[test]
+    fn suggestions_respect_the_scope_and_keep_explicit_choices() {
+        let mut c = Config::default();
+        c.games.push(Game { name: "One".into(), ..Default::default() });
+        let mut suggested = crate::catalog::suggested_apps().into_iter();
+        let (kept, _) = suggested.next().unwrap();
+        let (filled, action) = suggested.next().unwrap();
+        let (global, _) = suggested.next().unwrap();
+        // An explicit Keep on the game itself, and an explicit action in the global list.
+        c.games[0].apps.insert(kept.clone(), ProcAction::Keep);
+        c.apps.insert(global.clone(), ProcAction::Close);
+
+        apply_app_suggestions_to(&mut c, Some(0));
+        assert_eq!(c.games[0].apps.get(&kept), Some(&ProcAction::Keep), "an explicit game choice is kept");
+        assert_eq!(c.apps.get(&global), Some(&ProcAction::Close), "a global choice is not overwritten");
+        assert_eq!(c.games[0].apps.get(&filled), Some(&action), "the game scope gets its own rule");
+        assert_eq!(c.apps.get(&filled), Some(&ProcAction::Keep), "a game scope never writes the global list");
+    }
+
+    #[test]
+    fn service_suggestions_fill_unanswered_services_only() {
+        let mut names =
+            crate::catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended && !crate::config::service_is_protected(s.name)).map(|s| s.name);
+        let off = names.next().unwrap();
+        let on = names.next().unwrap();
+        let mine = names.next().unwrap();
+
+        let mut c = Config::default();
+        c.services.insert(off.to_string(), false);
+        apply_suggestions_to(&mut c, None);
+        assert_eq!(c.services.get(off), Some(&false), "a service turned off is not turned back on");
+        assert_eq!(c.services.get(on), Some(&true), "an unanswered service is filled");
+
+        // In a game scope an unanswered service gets a game rule, while a global answer is
+        // inherited: the game map only holds differences, so silence means "follow the global
+        // list", and the global choice must not be silently reversed for one game.
+        let mut c = Config::default();
+        c.games.push(Game { name: "One".into(), ..Default::default() });
+        c.services.insert(off.to_string(), false);
+        c.games[0].services.insert(mine.to_string(), false);
+        apply_suggestions_to(&mut c, Some(0));
+        assert_eq!(c.games[0].services.get(on), Some(&true), "the game scope gets its own rule");
+        assert_eq!(c.services.get(on), None, "a game scope never writes the global list");
+        assert_eq!(c.games[0].services.get(off), None, "a global off choice is inherited");
+        assert_eq!(c.services.get(off), Some(&false), "the global choice is untouched");
+        assert_eq!(c.games[0].services.get(mine), Some(&false), "the game's own choice is kept");
     }
 }

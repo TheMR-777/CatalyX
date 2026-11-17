@@ -9,9 +9,23 @@ pub struct ServiceInfo {
     pub display: String,
     pub running: bool,
     pub can_stop: bool,
+    /// Whether Windows lets CatalyX start it again. Filled by `list_with_start` (the window's
+    /// background refresh); the cheap `list` says true, meaning "no reason to think otherwise".
+    pub can_start: bool,
 }
 
 pub fn list() -> Vec<ServiceInfo> {
+    enumerate(false)
+}
+
+/// Like `list`, and asks Windows for each service whether it could be started again. That check
+/// opens every service, so only the window's background refresh (and not the engine's per-service
+/// restore loop) uses it.
+pub fn list_with_start() -> Vec<ServiceInfo> {
+    enumerate(true)
+}
+
+fn enumerate(check_start: bool) -> Vec<ServiceInfo> {
     let mut out = Vec::new();
     unsafe {
         let scm = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
@@ -57,7 +71,20 @@ pub fn list() -> Vec<ServiceInfo> {
                         display: from_wide(it.lpDisplayName),
                         running: st.dwCurrentState == SERVICE_RUNNING,
                         can_stop: st.dwControlsAccepted & 1 != 0,
+                        can_start: true,
                     });
+                }
+            }
+            if check_start {
+                // One SCM handle for the whole pass: opening a service is cheap, opening the
+                // manager for each one is not.
+                for s in &mut out {
+                    let w = wide(&s.name);
+                    let h = OpenServiceW(scm, w.as_ptr(), SERVICE_START | SERVICE_QUERY_STATUS);
+                    s.can_start = !h.is_null();
+                    if !h.is_null() {
+                        CloseServiceHandle(h);
+                    }
                 }
             }
         }

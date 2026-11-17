@@ -1,8 +1,9 @@
 //! Slow work runs on short-lived threads (one per job, as the window did before); each result is stored
 //! in the State by `State::finish` and wakes the skin.
 
-use super::intent::Tone;
+use super::intent::{Event, Tone};
 use super::state::State;
+use crate::config::CpuLevel;
 use crate::{elevate, ffi, gpu, launcher, library, power, services};
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,14 +13,38 @@ pub(super) type Job = Box<dyn FnOnce() -> Option<Done> + Send>;
 
 /// Results coming back from jobs.
 pub(super) enum Done {
-    Hardware { gpu: Box<gpu::GpuState>, plans: Vec<power::Plan> },
+    Hardware {
+        gpu: Box<gpu::GpuState>,
+        plans: Vec<power::Plan>,
+    },
     Services(Vec<services::ServiceInfo>),
     Installed(Vec<library::Installed>),
-    Predicted { id: String, exe: String },
-    Candidates { id: String, list: Vec<(String, u64)> },
+    Predicted {
+        id: String,
+        exe: String,
+    },
+    Candidates {
+        id: String,
+        list: Vec<(String, u64)>,
+    },
     Info(String),
     Error(String),
-    Elevation { ui_task: bool, watcher: bool },
+    Elevation {
+        ui_task: bool,
+        watcher: bool,
+    },
+    EndedApp {
+        name: String,
+        count: usize,
+    },
+    /// Whether the elevated copy could be started.
+    Relaunch(bool),
+    /// A power-plan action: whether Windows accepted it, and whether it built CatalyX's plan
+    /// (`created`) rather than switching to an existing one.
+    PowerChanged {
+        ok: bool,
+        created: bool,
+    },
 }
 
 impl State {
@@ -47,7 +72,7 @@ impl State {
         }
         self.svc_busy = true;
         self.last_svc = Some(Instant::now());
-        self.spawn(|| Some(Done::Services(services::list())));
+        self.spawn(|| Some(Done::Services(services::list_with_start())));
     }
 
     pub(super) fn scan_library(&mut self) {
@@ -98,6 +123,21 @@ impl State {
         });
     }
 
+    /// Switches Windows to a plan on a job thread: applying a plan can block while Windows works.
+    pub(super) fn set_power_plan(&mut self, guid: String) {
+        self.spawn(move || Some(Done::PowerChanged { ok: power::set_active(&guid), created: false }));
+    }
+
+    /// Builds or refreshes CatalyX's own plan, off the UI thread. It is copied from whichever plan
+    /// is active at the time, so the job reads that itself instead of trusting an old View.
+    pub(super) fn create_boost_plan(&mut self, level: CpuLevel) {
+        self.spawn(move || {
+            let level = if level == CpuLevel::Off { CpuLevel::Boost } else { level };
+            let cur = power::active().unwrap_or_default();
+            Some(Done::PowerChanged { ok: power::ensure_boost_plan(level, &cur), created: true })
+        });
+    }
+
     /// Stores a job's result.
     pub(super) fn finish(&mut self, d: Done) {
         self.rev += 1;
@@ -140,6 +180,30 @@ impl State {
             Done::Elevation { ui_task, watcher } => {
                 self.system.elevation = Some((ui_task, watcher));
                 self.system.elevation_busy = false;
+            }
+            Done::EndedApp { name, count } => {
+                self.toast(Tone::Info, format!("Ended {count} process(es) of {name}"));
+            }
+            Done::Relaunch(started) => {
+                if started {
+                    self.event(Event::ReadyToQuit);
+                } else {
+                    self.toast(Tone::Error, "The administrator prompt was cancelled");
+                }
+            }
+            Done::PowerChanged { ok, created } => {
+                if created {
+                    if ok {
+                        self.toast(Tone::Ok, "CatalyX plan is ready");
+                    } else {
+                        self.toast(Tone::Error, "Windows would not create the plan");
+                    }
+                    self.refresh_hardware();
+                } else if ok {
+                    self.refresh_hardware();
+                } else {
+                    self.toast(Tone::Error, "Windows refused the change");
+                }
             }
         }
     }

@@ -28,6 +28,19 @@ impl View {
     pub fn phase(&self) -> Phase {
         self.status.phase
     }
+
+    /// Whether Windows lets CatalyX start this service again, from the last service list. Before
+    /// that list has arrived there is no reason to think it cannot: the engine still applies the
+    /// same check and leaves a protected service running.
+    pub fn service_can_start(&self, name: &str) -> bool {
+        self.services.iter().find(|s| s.name.eq_ignore_ascii_case(name)).map(|s| s.can_start).unwrap_or(true)
+    }
+
+    /// Whether a chosen service will really be paused for the session: not one Windows protects,
+    /// and one it can start again. One rule for the plan, the summary and the engine.
+    pub fn service_stops(&self, name: &str, chosen: bool) -> bool {
+        chosen && !crate::config::service_is_protected(name) && self.service_can_start(name)
+    }
 }
 
 /// Graphics card, power plans and live card readings, filled by probes.
@@ -52,4 +65,6 @@ pub struct System {
     /// (one-click administrator task, background watcher), once asked.
     pub elevation: Option<(bool, bool)>,
     pub elevation_busy: bool,
+    /// This process's own working set, sampled while the Settings page shows it.
+    pub own_working_set: u64,
 }

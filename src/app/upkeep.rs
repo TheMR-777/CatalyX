@@ -37,6 +37,15 @@ impl State {
                 self.rev += 1;
             }
         }
+        // This window's own footprint, only while it is on screen.
+        if f.interest.own_usage && self.last_own.elapsed() > Duration::from_secs(1) {
+            self.last_own = Instant::now();
+            let ws = ffi::own_working_set();
+            if ws != self.system.own_working_set {
+                self.system.own_working_set = ws;
+                self.rev += 1;
+            }
+        }
         // Services change slowly: refresh every few seconds while they are shown.
         if f.interest.services && self.last_svc.map(|t| t.elapsed() > Duration::from_secs(5)).unwrap_or(true) {
             self.refresh_services();

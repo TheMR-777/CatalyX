@@ -57,23 +57,7 @@ fn set_action(app: &mut CatalyxApp, game: Option<usize>, exe: &str, a: ProcActio
 }
 
 fn set_action_in(cfg: &mut Config, game: Option<usize>, exe: &str, a: ProcAction) {
-    match game {
-        None => {
-            if a == ProcAction::Keep {
-                cfg.apps.remove(exe);
-            } else {
-                cfg.apps.insert(exe.to_string(), a);
-            }
-        }
-        Some(i) => {
-            let global = cfg.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
-            if a == global {
-                cfg.games[i].apps.remove(exe);
-            } else {
-                cfg.games[i].apps.insert(exe.to_string(), a);
-            }
-        }
-    }
+    cfg.set_app_rule(game, exe, a);
 }
 
 fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
@@ -210,13 +194,8 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if ui.add(egui_components::Button::secondary("Use suggestions").small()).on_hover_text("Lowers browsers, chat and sync clients; pauses background helpers; closes only updaters and Windows extras. Never closes anything that holds your work.").clicked() {
-                app.edit(|cfg| {
-                    for (exe, a) in catalog::suggested_apps() {
-                        if effective_in(cfg, None, &exe) == ProcAction::Keep {
-                            set_action_in(cfg, None, &exe, a);
-                        }
-                    }
-                });
+                // Only this scope's rules change; a game scope gets its own rules, not the global ones.
+                app.edit(move |cfg| crate::app::apply_app_suggestions_to(cfg, game));
                 app.toast_ok("Suggestions added (your own choices were kept)");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Set all to Keep").small()).clicked() {
