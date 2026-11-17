@@ -20,11 +20,10 @@ impl Default for ProfUi {
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
     // A removed game or preset must not leave a dangling target.
+    let cfg = app.v.config.clone();
     app.ui.prof.target = match app.ui.prof.target {
-        EditTarget::Preset(i) if i >= app.cfg.presets.len() => EditTarget::Preset(0),
-        EditTarget::Game(i) if i >= app.cfg.games.len() || app.cfg.games[i].custom.is_none() => {
-            EditTarget::Preset(1.min(app.cfg.presets.len() - 1))
-        }
+        EditTarget::Preset(i) if i >= cfg.presets.len() => EditTarget::Preset(0),
+        EditTarget::Game(i) if i >= cfg.games.len() || cfg.games[i].custom.is_none() => EditTarget::Preset(1.min(cfg.presets.len() - 1)),
         t => t,
     };
     centered(ui, 1120.0, |ui, total| {
@@ -51,13 +50,14 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 
 /// Which preset or game-with-own-settings to edit, as one drop-down (for narrow windows).
 fn selector(app: &mut CatalyxApp, ui: &mut Ui) {
-    let mut targets: Vec<EditTarget> = (0..app.cfg.presets.len()).map(EditTarget::Preset).collect();
-    targets.extend(app.cfg.games.iter().enumerate().filter(|(_, g)| g.custom.is_some()).map(|(i, _)| EditTarget::Game(i)));
+    let cfg = app.v.config.clone();
+    let mut targets: Vec<EditTarget> = (0..cfg.presets.len()).map(EditTarget::Preset).collect();
+    targets.extend(cfg.games.iter().enumerate().filter(|(_, g)| g.custom.is_some()).map(|(i, _)| EditTarget::Game(i)));
     let names: Vec<String> = targets
         .iter()
         .map(|t| match t {
-            EditTarget::Preset(i) => app.cfg.presets[*i].name.clone(),
-            EditTarget::Game(i) => format!("{} (own settings)", app.cfg.games[*i].name),
+            EditTarget::Preset(i) => cfg.presets[*i].name.clone(),
+            EditTarget::Game(i) => format!("{} (own settings)", cfg.games[*i].name),
         })
         .collect();
     let mut cur = targets.iter().position(|t| *t == app.ui.prof.target).unwrap_or(0);
@@ -74,8 +74,8 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
     ui.spacing_mut().item_spacing.y = 6.0;
     section_label(ui, "Presets");
-    for i in 0..app.cfg.presets.len() {
-        let pr = app.cfg.presets[i].clone();
+    for i in 0..app.v.config.presets.len() {
+        let pr = app.v.config.presets[i].clone();
         let selected = app.ui.prof.target == EditTarget::Preset(i);
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
         ui.painter().rect_filled(
@@ -106,7 +106,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
             egui::FontId::proportional(12.0),
             p.faint,
         );
-        if app.cfg.default_preset == pr.id {
+        if app.v.config.default_preset == pr.id {
             let g = ui.painter().layout_no_wrap("Default".into(), egui::FontId::proportional(12.0), p.accent);
             let cr = egui::Rect::from_min_size(rect.right_top() + vec2(-g.size().x - 22.0, 10.0), vec2(g.size().x + 14.0, 18.0));
             ui.painter().rect_filled(cr, 9, p.accent_soft);
@@ -117,22 +117,25 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
         }
     }
     if ui.add(egui_components::Button::secondary("New preset from this one").full_width()).clicked() {
-        let base = match app.ui.prof.target {
-            EditTarget::Preset(i) => app.cfg.presets[i].settings.clone(),
-            EditTarget::Game(i) => app.cfg.games[i].custom.clone().unwrap_or_default(),
-        };
-        let n = app.cfg.presets.iter().filter(|p| !p.builtin).count() + 1;
-        app.cfg.presets.push(Preset {
-            id: app.cfg.new_id("preset"),
-            name: format!("My preset {n}"),
-            about: "Your own preset".into(),
-            builtin: false,
-            settings: base,
+        let target = app.ui.prof.target;
+        app.edit(move |cfg| {
+            let base = match target {
+                EditTarget::Preset(i) => cfg.presets[i].settings.clone(),
+                EditTarget::Game(i) => cfg.games[i].custom.clone().unwrap_or_default(),
+            };
+            let n = cfg.presets.iter().filter(|p| !p.builtin).count() + 1;
+            let id = cfg.new_id("preset");
+            cfg.presets.push(Preset {
+                id,
+                name: format!("My preset {n}"),
+                about: "Your own preset".into(),
+                builtin: false,
+                settings: base,
+            });
         });
-        app.ui.prof.target = EditTarget::Preset(app.cfg.presets.len() - 1);
-        app.mark_dirty();
+        app.ui.prof.target = EditTarget::Preset(app.v.config.presets.len() - 1);
     }
-    let own: Vec<usize> = app.cfg.games.iter().enumerate().filter(|(_, g)| g.custom.is_some()).map(|(i, _)| i).collect();
+    let own: Vec<usize> = app.v.config.games.iter().enumerate().filter(|(_, g)| g.custom.is_some()).map(|(i, _)| i).collect();
     if !own.is_empty() {
         ui.add_space(8.0);
         section_label(ui, "Games with their own settings");
@@ -159,7 +162,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
             ui.painter().text(
                 rect.left_center() + vec2(14.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                short(&app.cfg.games[i].name, 28),
+                short(&app.v.config.games[i].name, 28),
                 egui::FontId::proportional(14.0),
                 p.text,
             );
@@ -173,68 +176,70 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
 fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
     let target = app.ui.prof.target;
-    let admin = app.admin;
+    let admin = app.v.system.admin;
     ScrollArea::vertical().id_salt("profile-editor").auto_shrink([false, false]).show(ui, |ui| {
         card(ui, |ui| {
             ui.set_width(ui.available_width());
+            // The header shows the config as it was when this card started drawing: a button below may
+            // change it (a deleted preset must not be read again in the same frame).
+            let cfg = app.v.config.clone();
             match target {
                 EditTarget::Preset(i) => {
-                    let builtin = app.cfg.presets[i].builtin;
+                    let pr = &cfg.presets[i];
+                    let builtin = pr.builtin;
                     ui.horizontal(|ui| {
                         if builtin {
-                            ui.label(bold(&app.cfg.presets[i].name, 16.0));
+                            ui.label(bold(&pr.name, 16.0));
                         } else {
-                            let mut name = app.cfg.presets[i].name.clone();
+                            let mut name = pr.name.clone();
                             if ui.add(egui_components::Input::new(&mut name).width(240.0)).changed() && !name.trim().is_empty() {
-                                app.cfg.presets[i].name = name;
-                                app.mark_dirty();
+                                app.edit(move |cfg| cfg.presets[i].name = name);
                             }
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if !builtin && ui.add(egui_components::Button::ghost("Delete").small()).clicked() {
-                                let id = app.cfg.presets[i].id.clone();
-                                app.cfg.presets.remove(i);
-                                let fallback = app.cfg.presets[1.min(app.cfg.presets.len() - 1)].id.clone();
-                                for g in app.cfg.games.iter_mut().filter(|g| g.preset == id) {
-                                    g.preset = fallback.clone();
-                                }
-                                if app.cfg.default_preset == id {
-                                    app.cfg.default_preset = fallback;
-                                }
-                                app.ui.prof.target = EditTarget::Preset(1.min(app.cfg.presets.len() - 1));
-                                app.mark_dirty();
+                                let id = pr.id.clone();
+                                app.edit(move |cfg| {
+                                    cfg.presets.remove(i);
+                                    let fallback = cfg.presets[1.min(cfg.presets.len() - 1)].id.clone();
+                                    for g in cfg.games.iter_mut().filter(|g| g.preset == id) {
+                                        g.preset = fallback.clone();
+                                    }
+                                    if cfg.default_preset == id {
+                                        cfg.default_preset = fallback;
+                                    }
+                                });
+                                app.ui.prof.target = EditTarget::Preset(1.min(app.v.config.presets.len() - 1));
                             }
                             if builtin && ui.add(egui_components::Button::ghost("Reset to built-in").small()).clicked() {
-                                if let Some(b) = crate::config::builtin_presets().into_iter().find(|b| b.id == app.cfg.presets[i].id) {
-                                    app.cfg.presets[i].settings = b.settings;
-                                    app.mark_dirty();
+                                if let Some(b) = crate::config::builtin_presets().into_iter().find(|b| b.id == pr.id) {
+                                    app.edit(move |cfg| cfg.presets[i].settings = b.settings);
                                     app.toast_ok("Preset reset");
                                 }
                             }
-                            let is_default = app.cfg.default_preset == app.cfg.presets[i].id;
+                            let is_default = app.v.config.default_preset == pr.id;
                             if ui
                                 .add_enabled(!is_default, egui_components::Button::secondary("Make default").small())
                                 .on_hover_text("Used for new games and for Boost only")
                                 .clicked()
                             {
-                                app.cfg.default_preset = app.cfg.presets[i].id.clone();
-                                app.mark_dirty();
+                                let id = pr.id.clone();
+                                app.edit(move |cfg| cfg.default_preset = id);
                             }
                         });
                     });
-                    ui.label(faint(ui, app.cfg.presets[i].about.clone(), 12.0));
-                    let users = app.cfg.games.iter().filter(|g| g.custom.is_none() && g.preset == app.cfg.presets[i].id).count();
+                    ui.label(faint(ui, pr.about.clone(), 12.0));
+                    let users = cfg.games.iter().filter(|g| g.custom.is_none() && g.preset == pr.id).count();
                     ui.label(faint(ui, format!("{users} game(s) follow this preset"), 12.0));
                 }
                 EditTarget::Game(i) => {
                     ui.horizontal(|ui| {
-                        ui.label(bold(format!("{} - own settings", app.cfg.games[i].name), 16.0));
+                        ui.label(bold(format!("{} - own settings", cfg.games[i].name), 16.0));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let pname = app.cfg.preset(&app.cfg.games[i].preset).name.clone();
+                            let pname = cfg.preset(&cfg.games[i].preset).name.clone();
                             if ui.add(egui_components::Button::secondary(format!("Follow {pname} again")).small()).clicked() {
-                                app.cfg.games[i].custom = None;
-                                app.ui.prof.target = EditTarget::Preset(1.min(app.cfg.presets.len() - 1));
-                                app.mark_dirty();
+                                app.edit(move |cfg| cfg.games[i].custom = None);
+                                app.ui.prof.target = EditTarget::Preset(1.min(app.v.config.presets.len() - 1));
                             }
                         });
                     });
@@ -243,18 +248,18 @@ fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
             }
         });
         ui.add_space(10.0);
-        let mut s: Settings = match app.ui.prof.target {
-            EditTarget::Preset(i) => app.cfg.presets[i].settings.clone(),
-            EditTarget::Game(i) => app.cfg.games[i].custom.clone().unwrap_or_default(),
+        let target = app.ui.prof.target;
+        let mut s: Settings = match target {
+            EditTarget::Preset(i) => app.v.config.presets[i].settings.clone(),
+            EditTarget::Game(i) => app.v.config.games[i].custom.clone().unwrap_or_default(),
         };
         let before = s.clone();
         settings_editor(ui, &mut s, admin, &p);
         if s != before {
-            match app.ui.prof.target {
-                EditTarget::Preset(i) => app.cfg.presets[i].settings = s,
-                EditTarget::Game(i) => app.cfg.games[i].custom = Some(s),
-            }
-            app.mark_dirty();
+            app.edit(move |cfg| match target {
+                EditTarget::Preset(i) => cfg.presets[i].settings = s,
+                EditTarget::Game(i) => cfg.games[i].custom = Some(s),
+            });
         }
     });
 }

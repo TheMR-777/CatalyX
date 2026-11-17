@@ -7,10 +7,10 @@
 //! person's accent, not green.
 
 use super::icons::{self, Ico};
-use super::pages::Confirm;
 use super::theme::{alpha, mix, pal};
 use super::widgets::*;
 use super::CatalyxApp;
+use crate::app::Intent;
 use crate::config::{CpuLevel, GpuLevel, PowerChoice, ProcAction};
 use crate::engine::{Phase, Status};
 use egui::{pos2, vec2, Align, Align2, FontId, Id, Layout, Pos2, Rect, Sense, Shape, Stroke, Ui};
@@ -96,13 +96,14 @@ pub fn progress_for(phase: Phase, done: usize, total: usize) -> f32 {
 }
 
 pub fn state(app: &CatalyxApp, st: &Status) -> Ctl {
-    let games = app.cfg.games.len();
-    let sel = app.cfg.selected_game.min(games.saturating_sub(1));
-    let game = app.cfg.games.get(sel);
-    let s = app.cfg.settings_for(game);
-    let rules = app.cfg.apps_for(game);
+    let cfg = &*app.v.config;
+    let games = cfg.games.len();
+    let sel = cfg.selected_game.min(games.saturating_sub(1));
+    let game = cfg.games.get(sel);
+    let s = cfg.settings_for(game);
+    let rules = cfg.apps_for(game);
     let n_rules = rules.values().filter(|a| **a != ProcAction::Keep).count();
-    let n_svc = app.cfg.services_for(game).values().filter(|v| **v).count();
+    let n_svc = cfg.services_for(game).values().filter(|v| **v).count();
     let k = &st.counts;
     let phase = st.phase;
     let applied = matches!(phase, Phase::Finding | Phase::Running | Phase::Boosted | Phase::Restoring);
@@ -133,8 +134,8 @@ pub fn state(app: &CatalyxApp, st: &Status) -> Ctl {
     let name = game.map(|g| g.name.clone()).unwrap_or_else(|| "Gaming mode".into());
     let profile = match game {
         Some(g) if g.custom.is_some() => "Own settings".to_string(),
-        Some(g) => app.cfg.preset(&g.preset).name.clone(),
-        None => app.cfg.preset(&app.cfg.default_preset).name.clone(),
+        Some(g) => cfg.preset(&g.preset).name.clone(),
+        None => cfg.preset(&cfg.default_preset).name.clone(),
     };
     let pending = stages.iter().find(|s| !s.1).map(|s| s.0);
     let (title, sub) = match phase {
@@ -171,28 +172,24 @@ pub fn click_act(c: &Ctl) -> Option<Act> {
 
 impl CatalyxApp {
     pub fn control_style(&self) -> Style {
-        Style::from_key(&self.cfg.boost_control)
+        Style::from_key(&self.v.config.boost_control)
     }
 
     /// Carries out what the control asked for.
     pub(super) fn control_act(&mut self, a: Act) {
-        let games = self.cfg.games.len();
-        let sel = self.cfg.selected_game.min(games.saturating_sub(1));
+        let games = self.v.config.games.len();
+        let sel = self.v.config.selected_game.min(games.saturating_sub(1));
         match a {
-            Act::Restore => self.restore(),
+            Act::Restore => self.send(Intent::Restore),
             Act::Boost => self.request_boost(if games > 0 { Some(sel) } else { None }),
             Act::BoostOnly => self.request_boost(None),
         }
     }
 
-    /// Starting a boost: first the summary of what will change (unless the person turned that off).
+    /// Starting a boost. The core decides whether the summary comes first (it then sends
+    /// `Event::ConfirmBoost`, which opens the dialog).
     pub(super) fn request_boost(&mut self, idx: Option<usize>) {
-        if self.cfg.confirm_boost {
-            self.boost_dont_ask = false;
-            self.confirm = Some(Confirm::Boost { idx });
-        } else {
-            self.boost_game(idx);
-        }
+        self.send(Intent::Boost { game: idx });
     }
 }
 
@@ -377,7 +374,7 @@ pub fn boost_only_link(ui: &mut Ui, c: &Ctl) -> Option<Act> {
 /// runs it shows the stages as they finish and a progress line along its top edge.
 pub fn launch_bar(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
-    let status = app.status.lock().map(|s| s.clone()).unwrap_or_default();
+    let status = app.v.status.clone();
     let c = state(app, &status);
     app.drawn.insert("boost_control");
     let full = ui.max_rect();

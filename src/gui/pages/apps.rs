@@ -3,7 +3,7 @@
 //! the suggestions never use it for programs that hold your data.
 
 use crate::catalog;
-use crate::config::{app_is_protected, ProcAction};
+use crate::config::{app_is_protected, Config, ProcAction};
 use crate::gui::icons::{self, Ico};
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
@@ -36,40 +36,48 @@ struct Row {
 
 pub fn scope_game(app: &CatalyxApp) -> Option<usize> {
     let s = app.ui.apps.scope;
-    (s > 0 && s <= app.cfg.games.len()).then(|| s - 1)
+    (s > 0 && s <= app.v.config.games.len()).then(|| s - 1)
 }
 
 pub fn effective(app: &CatalyxApp, game: Option<usize>, exe: &str) -> ProcAction {
-    let global = app.cfg.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
-    match game.and_then(|i| app.cfg.games.get(i)) {
+    effective_in(&app.v.config, game, exe)
+}
+
+fn effective_in(cfg: &Config, game: Option<usize>, exe: &str) -> ProcAction {
+    let global = cfg.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
+    match game.and_then(|i| cfg.games.get(i)) {
         Some(g) => g.apps.get(exe).copied().unwrap_or(global),
         None => global,
     }
 }
 
 fn set_action(app: &mut CatalyxApp, game: Option<usize>, exe: &str, a: ProcAction) {
+    let exe = exe.to_string();
+    app.edit(move |cfg| set_action_in(cfg, game, &exe, a));
+}
+
+fn set_action_in(cfg: &mut Config, game: Option<usize>, exe: &str, a: ProcAction) {
     match game {
         None => {
             if a == ProcAction::Keep {
-                app.cfg.apps.remove(exe);
+                cfg.apps.remove(exe);
             } else {
-                app.cfg.apps.insert(exe.to_string(), a);
+                cfg.apps.insert(exe.to_string(), a);
             }
         }
         Some(i) => {
-            let global = app.cfg.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
+            let global = cfg.apps.get(exe).copied().unwrap_or(ProcAction::Keep);
             if a == global {
-                app.cfg.games[i].apps.remove(exe);
+                cfg.games[i].apps.remove(exe);
             } else {
-                app.cfg.games[i].apps.insert(exe.to_string(), a);
+                cfg.games[i].apps.insert(exe.to_string(), a);
             }
         }
     }
-    app.mark_dirty();
 }
 
 fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
-    let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
+    let snap = app.v.snap.clone();
     let mut map: HashMap<String, Row> = HashMap::new();
     for p in &snap.procs {
         if p.pid <= 4 || p.name_lower.is_empty() || p.name_lower == "catalyx.exe" || p.name_lower == "pureboost.exe" {
@@ -93,7 +101,7 @@ fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
         e.gpu = e.gpu.max(p.gpu);
     }
     // Rules for programs that are not running right now still belong in "With rules".
-    let rules = app.cfg.apps_for(game.and_then(|i| app.cfg.games.get(i)));
+    let rules = app.v.config.apps_for(game.and_then(|i| app.v.config.games.get(i)));
     for (exe, a) in rules.iter().filter(|(_, a)| **a != ProcAction::Keep) {
         map.entry(exe.clone()).or_insert_with(|| Row {
             exe: exe.clone(),
@@ -114,7 +122,7 @@ fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
     // Keep the scope inside the library.
-    if app.ui.apps.scope > app.cfg.games.len() {
+    if app.ui.apps.scope > app.v.config.games.len() {
         app.ui.apps.scope = 0;
     }
     let game = scope_game(app);
@@ -131,7 +139,7 @@ fn toolbar(app: &mut CatalyxApp, ui: &mut Ui, w: f32) {
     let wide = w >= 900.0;
     let gap = 16.0;
     let mut scopes: Vec<String> = vec!["All games".into()];
-    scopes.extend(app.cfg.games.iter().map(|g| g.name.clone()));
+    scopes.extend(app.v.config.games.iter().map(|g| g.name.clone()));
     let scope_w = 180.0;
     let seg_w = 290.0;
     let sort_w = 110.0;
@@ -189,7 +197,7 @@ fn toolbar(app: &mut CatalyxApp, ui: &mut Ui, w: f32) {
 
 fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
     let p = app.pal();
-    let rules = app.cfg.apps_for(game.and_then(|i| app.cfg.games.get(i)));
+    let rules = app.v.config.apps_for(game.and_then(|i| app.v.config.games.get(i)));
     let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -202,11 +210,13 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if ui.add(egui_components::Button::secondary("Use suggestions").small()).on_hover_text("Lowers browsers, chat and sync clients; pauses background helpers; closes only updaters and Windows extras. Never closes anything that holds your work.").clicked() {
-                for (exe, a) in catalog::suggested_apps() {
-                    if effective(app, None, &exe) == ProcAction::Keep {
-                        set_action(app, None, &exe, a);
+                app.edit(|cfg| {
+                    for (exe, a) in catalog::suggested_apps() {
+                        if effective_in(cfg, None, &exe) == ProcAction::Keep {
+                            set_action_in(cfg, None, &exe, a);
+                        }
                     }
-                }
+                });
                 app.toast_ok("Suggestions added (your own choices were kept)");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Set all to Keep").small()).clicked() {

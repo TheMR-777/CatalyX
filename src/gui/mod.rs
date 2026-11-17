@@ -1,5 +1,9 @@
 //! The window. Built on egui (eframe, OpenGL) and the egui-components library.
 //!
+//! The window is a skin over the core (`crate::app`): it draws from `self.v` (the core's View, taken at
+//! the start of each frame and after each change), changes things only through `send` (and, for now,
+//! `edit`), and shows the core's events (toasts, the boost summary, closing).
+//!
 //! Footprint rules: the window draws only when something changed (input, a background result,
 //! or a slow 2 s tick for the live meters); a minimised window asks for nothing; per-process
 //! scans only run while the Apps page is open or a boost is active; every blocking job (file
@@ -14,9 +18,10 @@ mod pages;
 mod theme;
 mod widgets;
 
-use crate::config::{Config, Game};
-use crate::engine::{BoostRequest, Cmd, Phase, SharedStatus};
-use crate::{ffi, gpu, library, power, procs, services};
+use crate::app::{self, Core, CoreOptions, Event, FrameFacts, Intent, Interest, View};
+use crate::config::Config;
+use crate::engine::Phase;
+use crate::{ffi, procs};
 use egui::{vec2, Align, Context, Layout, RichText};
 use egui_components::Toasts;
 use icons::Ico;
@@ -56,23 +61,11 @@ pub enum EditTarget {
     Game(usize),
 }
 
+#[derive(Clone, Copy)]
 pub enum PickFor {
     GameFile,
     ExportConfig,
     ImportConfig,
-}
-
-/// Results coming back from worker threads.
-pub enum Msg {
-    Hardware { gpu: Box<gpu::GpuState>, plans: Vec<power::Plan> },
-    Services(Vec<services::ServiceInfo>),
-    Picked(PickFor, String),
-    Installed(Vec<library::Installed>),
-    Predicted { id: String, exe: String },
-    Candidates { id: String, list: Vec<(String, u64)> },
-    Info(String),
-    Error(String),
-    Elevation { ui_task: bool, watcher: bool },
 }
 
 pub struct Options {
@@ -93,41 +86,19 @@ pub struct Options {
 }
 
 pub struct CatalyxApp {
-    pub cfg: Config,
+    pub core: Core,
+    /// The core's state as of the start of this frame (or the last change made in it).
+    pub v: View,
     pub ctx: Context,
-    pub snap: procs::SharedSnapshot,
-    pub tx: Sender<Cmd>,
-    pub status: SharedStatus,
-    pub admin: bool,
     pub tab: Tab,
     pub toasts: Toasts,
-    msg_tx: Sender<Msg>,
-    msg_rx: Receiver<Msg>,
-    pub dirty_since: Option<Instant>,
-    pub no_save: bool,
+    /// File dialogs answer here (they run on their own short-lived thread).
+    picked_tx: Sender<(PickFor, String)>,
+    picked_rx: Receiver<(PickFor, String)>,
     sys_dark: bool,
     last_sys_check: Instant,
     palette_key: Option<(ThemeId, AccentId, u8, bool)>,
     titlebar_for: Option<(bool, u32)>,
-    // hardware and services, filled by workers
-    pub gpu: Option<gpu::GpuState>,
-    pub plans: Vec<power::Plan>,
-    pub svc_list: Vec<services::ServiceInfo>,
-    pub live: Option<gpu::Live>,
-    last_live: Instant,
-    hw_busy: bool,
-    pub elevation: Option<(bool, bool)>,
-    pub elevation_busy: bool,
-    svc_busy: bool,
-    last_svc: Option<Instant>,
-    // automatic boost
-    pub auto_ignore: HashSet<u32>,
-    last_auto_scan: Instant,
-    // closing while a boost is active
-    closing: Option<Instant>,
-    last_trim: Instant,
-    /// The minimised window has been trimmed once (reset when it is restored).
-    trimmed_minimized: bool,
     // page state
     pub ui: pages::PageState,
     pub confirm: Option<pages::Confirm>,
@@ -151,103 +122,56 @@ impl CatalyxApp {
         theme::install_fonts(&cc.egui_ctx);
         crate::trace::mark("fonts installed");
         let no_save = opts.screenshot.is_some() || opts.tour.is_some() || opts.demo || opts.selftest.is_some();
-        let snap = procs::start_monitor();
-        let (tx, status) = crate::engine::start(snap.clone());
-        crate::trace::mark("monitor and engine started");
-        let mut cfg = if no_save { Config::default() } else { Config::load() };
-        if opts.demo && cfg.games.is_empty() {
-            pages::demo_data(&mut cfg);
-        }
-        if let Some(t) = &opts.theme {
-            cfg.theme = ThemeId::from_key(t).key().to_string();
-        }
-        if let Some(a) = &opts.appearance {
-            cfg.appearance = a.to_lowercase();
-        }
-        if opts.dialog.as_deref() == Some("boost") {
-            cfg.onboarded = true;
-        }
-        if let Some(c) = &opts.control {
-            cfg.boost_control = control::Style::from_key(c).key().to_string();
-        }
-        if let Some(a) = &opts.accent {
-            cfg.accent = AccentId::from_key(a).key().to_string();
-        }
-        if opts.demo_session {
-            // For visual checks only: a believable running session (no real boost is made).
-            if let Ok(mut st) = status.lock() {
-                st.phase = Phase::Running;
-                st.game_name = "Stellar Drift".into();
-                st.game_exe = "stellardrift-win64.exe".into();
-                st.game_pid = 4242;
-                st.counts.free_before = 5_200_000_000;
-                st.counts.free_now = 6_900_000_000;
-                st.counts.mhz_before = 3400;
-                st.counts.mhz_peak = 3830;
-                st.counts.apps_lowered = 7;
-                st.counts.apps_paused = 3;
-                st.counts.apps_closed = 4;
-                st.counts.services_stopped = 12;
-                st.counts.tweaks = 5;
-                st.counts.ram_freed = 640 * 1024 * 1024;
-                st.counts.power_plan = "CatalyX plan".into();
-                st.counts.cpu_level = "Boost".into();
-                st.counts.game_priority = true;
-                st.counts.io_boost = true;
-                st.log = [
-                    "Boosting for Stellar Drift",
-                    "Power plan: CatalyX plan, CPU Boost (checked: turbo aggressive, cores unparked)",
-                    "Windows: Game Mode on",
-                    "Stopped service Connected User Experiences and Telemetry",
-                    "Freed 640 MB of memory from 32 apps",
-                    "Starting Stellar Drift",
-                    "Found the game: stellardrift-win64.exe (pid 4242)",
-                    "Game priority: Above normal",
-                    "Game disk I/O priority: High (checked with Windows)",
-                    "Windows efficiency mode kept off for the game",
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let check_run = opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some();
+        // The look flags of check runs are this skin's own settings: applied once, never saved for them.
+        let (theme_o, appearance_o, control_o, accent_o) =
+            (opts.theme.clone(), opts.appearance.clone(), opts.control.clone(), opts.accent.clone());
+        let dialog_boost = opts.dialog.as_deref() == Some("boost");
+        let prepare = move |cfg: &mut Config| {
+            if let Some(t) = &theme_o {
+                cfg.theme = ThemeId::from_key(t).key().to_string();
             }
-        }
-        let (msg_tx, msg_rx) = channel();
+            if let Some(a) = &appearance_o {
+                cfg.appearance = a.to_lowercase();
+            }
+            if dialog_boost {
+                cfg.onboarded = true;
+            }
+            if let Some(c) = &control_o {
+                cfg.boost_control = control::Style::from_key(c).key().to_string();
+            }
+            if let Some(a) = &accent_o {
+                cfg.accent = AccentId::from_key(a).key().to_string();
+            }
+        };
+        let core = Core::start(CoreOptions {
+            no_save,
+            demo: opts.demo,
+            demo_session: opts.demo_session,
+            selftest: opts.selftest.is_some(),
+            check_run,
+            prepare: Some(Box::new(prepare)),
+        });
+        let wake_ctx = cc.egui_ctx.clone();
+        core.connect(move || wake_ctx.request_repaint());
+        let v = core.view();
+        let (picked_tx, picked_rx) = channel();
         let mut app = CatalyxApp {
-            cfg,
+            core,
+            v,
             ctx: cc.egui_ctx.clone(),
-            snap,
-            tx,
-            status,
-            admin: ffi::is_admin(),
             tab: opts.tab.unwrap_or(Tab::Boost),
             toasts: Toasts::new(),
-            msg_tx,
-            msg_rx,
-            dirty_since: None,
-            no_save,
+            picked_tx,
+            picked_rx,
             sys_dark: ffi::system_prefers_dark(),
             last_sys_check: Instant::now(),
             palette_key: None,
             titlebar_for: None,
-            gpu: None,
-            plans: Vec::new(),
-            svc_list: Vec::new(),
-            live: None,
-            last_live: Instant::now() - Duration::from_secs(10),
-            hw_busy: false,
-            elevation: None,
-            elevation_busy: false,
-            svc_busy: false,
-            last_svc: None,
-            auto_ignore: HashSet::new(),
-            last_auto_scan: Instant::now(),
-            closing: None,
-            last_trim: Instant::now() - Duration::from_secs(10),
-            trimmed_minimized: false,
             ui: pages::PageState::default(),
             confirm: None,
             boost_dont_ask: false,
-            reveal_step: if opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some() { 2 } else { 0 },
+            reveal_step: if check_run { 2 } else { 0 },
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
@@ -258,14 +182,15 @@ impl CatalyxApp {
         crate::trace::mark("app state built");
         if app.reveal_step == 2 {
             // A check run draws at once and needs the data now; a normal start probes after the window is shown.
-            app.refresh_hardware();
-            app.refresh_services();
+            app.send(Intent::RefreshHardware);
+            app.send(Intent::RefreshServices);
         }
-        if !app.cfg.onboarded && !app.no_save {
+        if !app.v.config.onboarded && !no_save {
             app.confirm = Some(pages::Confirm::Welcome);
         }
-        if app.opts.dialog.as_deref() == Some("boost") {
-            app.confirm = Some(pages::Confirm::Boost { idx: Some(0) });
+        if dialog_boost {
+            app.core.show_boost_summary(Some(0));
+            app.drain_events();
         }
         app
     }
@@ -285,15 +210,56 @@ impl CatalyxApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 crate::trace::mark("window shown");
-                self.refresh_hardware();
-                self.refresh_services();
+                self.send(Intent::RefreshHardware);
+                self.send(Intent::RefreshServices);
             }
             _ => {}
         }
     }
 
+    /// Asks the core for a change, then takes its new state at once, so the rest of the frame sees it.
+    pub fn send(&mut self, intent: Intent) {
+        self.core.send(intent);
+        self.v = self.core.view();
+        // Toasts come out in the order the actions happened, as when the window made them itself.
+        self.drain_events();
+    }
+
+    /// TRANSITIONAL (Phase 1a T2a, replaced by named intents in T5): a page changes the config.
+    pub fn edit(&mut self, f: impl FnOnce(&mut Config) + Send + 'static) {
+        self.send(Intent::Edit(Box::new(f)));
+    }
+
+    /// Shows what the core asked for.
+    fn drain_events(&mut self) {
+        for e in self.core.take_events() {
+            match e {
+                Event::Toast { tone, text } => match tone {
+                    app::Tone::Ok => self.toast_ok(text),
+                    app::Tone::Info => self.toast_info(text),
+                    app::Tone::Error => self.toast_err(text),
+                },
+                Event::ConfirmBoost { game } => {
+                    self.boost_dont_ask = false;
+                    self.confirm = Some(pages::Confirm::Boost { idx: game });
+                }
+                Event::ReadyToClose => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            }
+        }
+    }
+
+    /// What this frame shows, as data the core can act on.
+    fn interest(&self) -> Interest {
+        Interest {
+            processes: self.tab == Tab::Apps,
+            gpu_live: self.tab == Tab::Tuning || self.tab == Tab::Boost,
+            services: self.tab == Tab::Services,
+            elevation: self.tab == Tab::Settings,
+        }
+    }
+
     pub fn dark_mode(&self) -> bool {
-        match self.cfg.appearance.as_str() {
+        match self.v.config.appearance.as_str() {
             "light" => false,
             "system" => self.sys_dark,
             _ => true,
@@ -301,32 +267,19 @@ impl CatalyxApp {
     }
 
     pub fn theme_id(&self) -> ThemeId {
-        ThemeId::from_key(&self.cfg.theme)
+        ThemeId::from_key(&self.v.config.theme)
     }
 
     pub fn accent_id(&self) -> AccentId {
-        AccentId::from_key(&self.cfg.accent)
+        AccentId::from_key(&self.v.config.accent)
     }
 
     pub fn pal(&self) -> theme::Palette {
         theme::pal(&self.ctx)
     }
 
-    pub fn mark_dirty(&mut self) {
-        if self.dirty_since.is_none() {
-            self.dirty_since = Some(Instant::now());
-        }
-    }
-
-    pub fn save_now(&mut self) {
-        if !self.no_save {
-            self.cfg.save();
-        }
-        self.dirty_since = None;
-    }
-
     pub fn phase(&self) -> Phase {
-        self.status.lock().map(|s| s.phase).unwrap_or(Phase::Idle)
+        self.v.phase()
     }
 
     pub fn toast_ok(&mut self, text: impl Into<String>) {
@@ -337,44 +290,6 @@ impl CatalyxApp {
     }
     pub fn toast_err(&mut self, text: impl Into<String>) {
         self.toasts.add(egui_components::Variant::Danger, None, text.into());
-    }
-
-    /// Run `job` on a worker thread; its message wakes the window.
-    pub fn spawn(&self, job: impl FnOnce() -> Option<Msg> + Send + 'static) {
-        let tx = self.msg_tx.clone();
-        let ctx = self.ctx.clone();
-        std::thread::spawn(move || {
-            if let Some(m) = job() {
-                let _ = tx.send(m);
-                ctx.request_repaint();
-            }
-        });
-    }
-
-    pub fn refresh_hardware(&mut self) {
-        if self.hw_busy {
-            return;
-        }
-        self.hw_busy = true;
-        self.spawn(|| Some(Msg::Hardware { gpu: Box::new(gpu::probe()), plans: power::list() }));
-    }
-
-    /// Which Task Scheduler entries exist (asked off the UI thread; it runs a helper program).
-    pub fn refresh_elevation(&mut self) {
-        if self.elevation_busy {
-            return;
-        }
-        self.elevation_busy = true;
-        self.spawn(|| Some(Msg::Elevation { ui_task: crate::elevate::ui_task_ready(), watcher: crate::elevate::watcher_enabled() }));
-    }
-
-    pub fn refresh_services(&mut self) {
-        if self.svc_busy {
-            return;
-        }
-        self.svc_busy = true;
-        self.last_svc = Some(Instant::now());
-        self.spawn(|| Some(Msg::Services(services::list())));
     }
 
     pub fn pick_file(&self, what: PickFor) {
@@ -388,146 +303,14 @@ impl CatalyxApp {
             PickFor::ExportConfig => (true, "Save CatalyX settings", "CatalyX settings\0*.json\0\0", "json"),
             PickFor::ImportConfig => (false, "Load CatalyX settings", "CatalyX settings\0*.json\0All files\0*.*\0\0", "json"),
         };
-        let (title, filter, ext) = (title.to_string(), filter.to_string(), ext.to_string());
-        self.spawn(move || ffi::pick_file(&title, &filter, &ext, save).map(|p| Msg::Picked(what, p)));
-    }
-
-    // ------------------------------------------------------------------ boosting
-
-    pub fn request_for(&self, game: Option<&Game>, attach: Option<u32>) -> BoostRequest {
-        BoostRequest {
-            game: game.cloned(),
-            settings: self.cfg.settings_for(game),
-            apps: self.cfg.apps_for(game),
-            services: self.cfg.services_for(game),
-            keep_apps_off: self.cfg.keep_apps_off,
-            restore_when_game_closes: self.cfg.restore_when_game_closes,
-            reopen_closed_apps: self.cfg.reopen_closed_apps,
-            gpu_temp_limit: self.cfg.gpu_temp_limit_c,
-            dry_run: false,
-            attach_pid: attach,
-        }
-    }
-
-    pub fn boost_game(&mut self, idx: Option<usize>) {
-        let game = idx.and_then(|i| self.cfg.games.get(i)).cloned();
-        if let Some(i) = idx {
-            if let Some(g) = self.cfg.games.get_mut(i) {
-                g.plays += 1;
+        let dialog = app::window::FileDialog { title: title.to_string(), filter: filter.to_string(), ext: ext.to_string(), save };
+        let (answer, ctx) = (self.picked_tx.clone(), self.ctx.clone());
+        app::window::pick_file(dialog, move |path| {
+            if let Some(p) = path {
+                let _ = answer.send((what, p));
+                ctx.request_repaint();
             }
-            self.cfg.selected_game = i;
-            self.mark_dirty();
-        }
-        procs::set_detail(true);
-        let req = self.request_for(game.as_ref(), None);
-        let _ = self.tx.send(Cmd::Boost(Box::new(req)));
-        match &game {
-            Some(g) => self.toast_info(format!("Boosting and starting {}", g.name)),
-            None => self.toast_info("Gaming mode on"),
-        }
-        self.ctx.request_repaint();
-    }
-
-    pub fn restore(&mut self) {
-        let pid = self.status.lock().map(|s| s.game_pid).unwrap_or(0);
-        if pid != 0 {
-            self.auto_ignore.insert(pid);
-        }
-        let _ = self.tx.send(Cmd::Restore);
-        self.ctx.request_repaint();
-    }
-
-    // ------------------------------------------------------------------ per-frame upkeep
-
-    fn drain_messages(&mut self) {
-        while let Ok(m) = self.msg_rx.try_recv() {
-            match m {
-                Msg::Hardware { gpu, plans } => {
-                    self.gpu = Some(*gpu);
-                    self.plans = plans;
-                    self.hw_busy = false;
-                }
-                Msg::Services(l) => {
-                    self.svc_list = l;
-                    self.svc_busy = false;
-                }
-                Msg::Picked(what, path) => pages::picked(self, what, path),
-                Msg::Installed(list) => {
-                    self.ui.games.installed = Some(list);
-                    self.ui.games.scanning = false;
-                }
-                Msg::Predicted { id, exe } => {
-                    if let Some(g) = self.cfg.games.iter_mut().find(|g| g.id == id) {
-                        if g.real_exe.is_empty() && !exe.is_empty() {
-                            g.real_exe = exe;
-                            self.mark_dirty();
-                        }
-                    }
-                }
-                Msg::Candidates { id, list } => {
-                    self.ui.games.candidates.insert(id, list);
-                }
-                Msg::Info(s) => {
-                    self.toast_info(s);
-                    // A finished administrator job may have changed the tasks.
-                    self.elevation = None;
-                }
-                Msg::Error(s) => {
-                    self.toast_err(s);
-                    self.elevation = None;
-                }
-                Msg::Elevation { ui_task, watcher } => {
-                    self.elevation = Some((ui_task, watcher));
-                    self.elevation_busy = false;
-                }
-            }
-        }
-    }
-
-    fn learn_game_program(&mut self) {
-        let learned = self.status.lock().ok().and_then(|mut s| s.learned.take());
-        if let Some((gid, exe)) = learned {
-            if let Some(g) = self.cfg.games.iter_mut().find(|g| g.id == gid) {
-                if g.real_exe != exe {
-                    g.real_exe = exe.clone();
-                    self.toast_ok(format!("Learned the real game program: {exe}"));
-                    self.mark_dirty();
-                }
-            }
-        }
-    }
-
-    /// Boost a known game that was started outside CatalyX (a store launcher, a shortcut).
-    /// Uses the cheap process list, not the full monitor.
-    fn auto_boost_scan(&mut self) {
-        if self.no_save
-            || !self.cfg.auto_boost_known_games
-            || self.phase() != Phase::Idle
-            || self.last_auto_scan.elapsed() < Duration::from_secs(3)
-        {
-            return;
-        }
-        self.last_auto_scan = Instant::now();
-        let list = ffi::quick_list();
-        let mut hit: Option<(usize, u32)> = None;
-        for (i, g) in self.cfg.games.iter().enumerate() {
-            let real = g.real_exe.to_lowercase();
-            if real.is_empty() {
-                continue;
-            }
-            if let Some((pid, _, _)) = list.iter().find(|(pid, _, name)| *name == real && !self.auto_ignore.contains(pid)) {
-                hit = Some((i, *pid));
-                break;
-            }
-        }
-        if let Some((i, pid)) = hit {
-            self.auto_ignore.insert(pid);
-            procs::set_detail(true);
-            let g = self.cfg.games[i].clone();
-            let req = self.request_for(Some(&g), Some(pid));
-            let _ = self.tx.send(Cmd::Boost(Box::new(req)));
-            self.toast_info(format!("{} started - boosting automatically", g.name));
-        }
+        });
     }
 
     /// Rounded corners and the drop shadow for the borderless window, once the window exists.
@@ -538,7 +321,7 @@ impl CatalyxApp {
     }
 
     fn apply_theme_if_needed(&mut self) {
-        let key = (self.theme_id(), self.accent_id(), self.cfg.tint, self.dark_mode());
+        let key = (self.theme_id(), self.accent_id(), self.v.config.tint, self.dark_mode());
         if self.palette_key != Some(key) {
             theme::apply(&self.ctx, &theme::palette(key.0, key.1, key.2, key.3));
             self.palette_key = Some(key);
@@ -562,90 +345,36 @@ fn save_png(path: &str, img: &egui::ColorImage) {
 
 impl eframe::App for CatalyxApp {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.v = self.core.view();
         self.apply_theme_if_needed();
-        self.drain_messages();
-        self.learn_game_program();
-        self.auto_boost_scan();
+        while let Ok((what, path)) = self.picked_rx.try_recv() {
+            pages::picked(self, what, path);
+        }
 
         let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
         let phase = self.phase();
         // Follow Windows' light/dark choice.
-        if self.cfg.appearance == "system" && self.last_sys_check.elapsed() > Duration::from_secs(3) {
+        if self.v.config.appearance == "system" && self.last_sys_check.elapsed() > Duration::from_secs(3) {
             self.last_sys_check = Instant::now();
             let d = ffi::system_prefers_dark();
             if d != self.sys_dark {
                 self.sys_dark = d;
             }
         }
-        // Per-process scans only where they are shown (Apps) or needed (a boost).
-        procs::set_detail(
-            self.tab == Tab::Apps
-                || phase.active()
-                || self.opts.screenshot.is_some()
-                || self.opts.tour.is_some()
-                || self.opts.selftest.is_some(),
-        );
-        procs::set_sample_interval(if minimized && !phase.active() {
-            8000
-        } else if phase.active() || self.tab == Tab::Apps {
-            1500
-        } else {
-            2500
-        });
-        // Live graphics card readings, only while they are on screen.
-        if (self.tab == Tab::Tuning || self.tab == Tab::Boost) && !minimized && self.last_live.elapsed() > Duration::from_millis(1500) {
-            self.last_live = Instant::now();
-            self.live = gpu::live();
+        // The core's upkeep (sampling, live readings, saving, closing, trims) runs once per frame for now.
+        let facts =
+            FrameFacts { interest: self.interest(), minimised: minimized, close_requested: ctx.input(|i| i.viewport().close_requested()) };
+        let up = self.core.tick(&facts);
+        if up.cancel_close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
-        // Services change slowly: refresh every few seconds while the page is open.
-        if self.tab == Tab::Services && self.last_svc.map(|t| t.elapsed() > Duration::from_secs(5)).unwrap_or(true) {
-            self.refresh_services();
-        }
-        // Save a moment after the last change.
-        if let Some(t) = self.dirty_since {
-            if t.elapsed() > Duration::from_millis(500) {
-                self.save_now();
-            }
-        }
-        // Closing during a boost puts everything back first.
-        if ctx.input(|i| i.viewport().close_requested()) && self.closing.is_none() {
-            if phase.active() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.closing = Some(Instant::now());
-                let _ = self.tx.send(Cmd::Restore);
-            } else {
-                self.save_now();
-            }
-        }
-        if let Some(t) = self.closing {
-            if phase == Phase::Idle || t.elapsed() > Duration::from_secs(20) {
-                self.save_now();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        }
+        self.v = self.core.view();
+        self.drain_events();
         // Dropped files become games.
         let dropped: Vec<String> =
             ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.as_ref().map(|p| p.to_string_lossy().to_string())).collect());
         for path in dropped {
-            pages::games::add_game(self, &path, None);
-        }
-        // Footprint: hand back memory the window is not using right now (driver and font pages
-        // that were only needed while drawing). They come back on demand, a few at a time.
-        if self.last_trim.elapsed() > Duration::from_secs(30) && self.opts.selftest.is_none() {
-            self.last_trim = Instant::now();
-            procs::trim(unsafe { ffi::GetCurrentProcessId() });
-        }
-        // A minimised window is not asked to draw again, so the 30 s timer above never runs for it
-        // - and minimised is exactly where it stays during a game. Trim once, just after the last
-        // frame, from a short-lived thread (nothing wakes this window again until it is restored).
-        if minimized && !self.trimmed_minimized && self.opts.selftest.is_none() {
-            self.trimmed_minimized = true;
-            std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_millis(1500));
-                procs::trim(unsafe { ffi::GetCurrentProcessId() });
-            });
-        } else if !minimized {
-            self.trimmed_minimized = false;
+            self.send(Intent::AddGame { path, name: None, real_exe: None });
         }
         self.run_checks(ctx);
         if let Some(mut t) = self.selftest.take() {
@@ -658,11 +387,7 @@ impl eframe::App for CatalyxApp {
         }
         // Slow tick for the live meters: nothing while minimised, quick while a boost runs.
         if !minimized {
-            ctx.request_repaint_after(if phase.active() || self.closing.is_some() {
-                Duration::from_millis(600)
-            } else {
-                Duration::from_millis(2000)
-            });
+            ctx.request_repaint_after(if phase.active() || up.closing { Duration::from_millis(600) } else { Duration::from_millis(2000) });
         }
     }
 
@@ -706,11 +431,7 @@ impl eframe::App for CatalyxApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.save_now();
-        if self.phase().active() {
-            let _ = self.tx.send(Cmd::Restore);
-            std::thread::sleep(Duration::from_millis(1500));
-        }
+        self.core.exit();
     }
 
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {

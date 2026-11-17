@@ -79,7 +79,7 @@ static ON_SAMPLE: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 
 /// Sets the hook the sampler calls after each new snapshot. Only the first call counts: there is
 /// one listener per process (the core).
-#[allow(dead_code)] // the core connects to it next (Phase 1a T2)
+#[allow(dead_code)] // the core's upkeep thread connects to it next (Phase 1a T2b)
 pub fn set_on_sample(f: impl Fn() + Send + Sync + 'static) {
     let _ = ON_SAMPLE.set(Box::new(f));
 }
@@ -222,10 +222,14 @@ pub fn start_monitor() -> SharedSnapshot {
     let shared: SharedSnapshot = Arc::new(Mutex::new(Snapshot::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
+        crate::trace::mark("TEMP monitor thread up");
         let mut sys = System::new();
         let mut gpu = GpuCounters::new();
+        crate::trace::mark("TEMP gpu counters");
         let mut freq = clock_probe();
+        crate::trace::mark("TEMP clock probe");
         let base_mhz = cpu_base_mhz();
+        crate::trace::mark("TEMP base mhz");
         let mut identity: HashMap<u32, (String, u64)> = HashMap::new();
         let mut unreadable: std::collections::HashSet<u32> = std::collections::HashSet::new();
         sys.refresh_cpu();
@@ -327,6 +331,7 @@ pub fn start_monitor() -> SharedSnapshot {
             if let Ok(mut s) = out.lock() {
                 *s = snap;
             }
+            crate::trace::mark(&format!("TEMP monitor wrote serial {serial}"));
             // Outside the snapshot lock: the hook may read the snapshot itself.
             if let Some(f) = ON_SAMPLE.get() {
                 f();

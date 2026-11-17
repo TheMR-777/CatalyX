@@ -11,7 +11,7 @@ impl CatalyxApp {
             ("Control", &[Tab::Apps, Tab::Services, Tab::Profiles]),
             ("System", &[Tab::Tuning, Tab::Settings]),
         ];
-        let pending = self.status.lock().map(|s| s.pending_journal && s.phase == Phase::Idle).unwrap_or(false);
+        let pending = self.v.status.pending_journal && self.v.status.phase == Phase::Idle;
         for (name, tabs) in groups {
             if !compact {
                 ui.add_space(8.0);
@@ -47,7 +47,7 @@ impl CatalyxApp {
         // Bottom: status and quick light/dark switch.
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.add_space(12.0);
-            let st = self.status.lock().map(|s| (s.phase, s.dry_run)).unwrap_or((Phase::Idle, false));
+            let st = (self.v.status.phase, self.v.status.dry_run);
             egui::Frame::new().fill(p.well).corner_radius(10).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 if compact {
@@ -70,13 +70,13 @@ impl CatalyxApp {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let (i, tip) = if self.dark_mode() { (Ico::Sun, "Switch to light") } else { (Ico::Moon, "Switch to dark") };
                             if widgets::icon_button(ui, i, tip).clicked() {
-                                self.cfg.appearance = if self.dark_mode() { "light".into() } else { "dark".into() };
-                                self.mark_dirty();
+                                let next = if self.dark_mode() { "light" } else { "dark" };
+                                self.edit(move |cfg| cfg.appearance = next.into());
                             }
                         });
                     });
                     ui.add_space(2.0);
-                    if self.admin {
+                    if self.v.system.admin {
                         widgets::chip(ui, "Administrator", widgets::Tone::Ok);
                     } else {
                         widgets::chip(ui, "Limited rights", widgets::Tone::Warn);
@@ -92,7 +92,7 @@ impl CatalyxApp {
     pub(super) fn title_bar(&mut self, ui: &mut egui::Ui, compact: bool, nav_w: f32) {
         let p = self.pal();
         let (_, title, sub, _) = TABS.iter().find(|(t, ..)| *t == self.tab).copied().unwrap();
-        let s = self.snap.lock().map(|s| (s.cpu_total, s.mem_used, s.mem_total, s.gpu_total, s.serial)).unwrap_or_default();
+        let s = (self.v.snap.cpu_total, self.v.snap.mem_used, self.v.snap.mem_total, self.v.snap.gpu_total, self.v.snap.serial);
         // Screenshots show steady, believable meters, not whatever this PC happens to be doing right then.
         let s = if self.opts.screenshot.is_some() || self.opts.tour.is_some() {
             const GIB: f64 = 1_073_741_824.0;

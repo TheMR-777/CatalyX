@@ -1,6 +1,7 @@
 //! Tuning: power plan, CPU performance and graphics card clocks, with live readings from the
 //! processor and the driver as proof that a setting does what it says.
 
+use crate::app::Intent;
 use crate::config::{CpuLevel, GpuLevel, PowerChoice};
 use crate::gui::icons::Ico;
 use crate::gui::pages::Confirm;
@@ -18,9 +19,9 @@ pub struct TuneUi {
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
-    if !app.ui.tune.chosen || app.ui.tune.preset >= app.cfg.presets.len() {
+    if !app.ui.tune.chosen || app.ui.tune.preset >= app.v.config.presets.len() {
         app.ui.tune.chosen = true;
-        app.ui.tune.preset = app.cfg.presets.iter().position(|p| p.id == app.cfg.default_preset).unwrap_or(0);
+        app.ui.tune.preset = app.v.config.presets.iter().position(|p| p.id == app.v.config.default_preset).unwrap_or(0);
     }
     page(ui, "tuning", 1120.0, |ui| {
         let total = ui.available_width();
@@ -28,7 +29,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             ui.label(dim(ui, "Tune profile", 14.0));
-            let names: Vec<String> = app.cfg.presets.iter().map(|p| p.name.clone()).collect();
+            let names: Vec<String> = app.v.config.presets.iter().map(|p| p.name.clone()).collect();
             let mut i = app.ui.tune.preset;
             if dropdown(ui, "tune-profile", 200.0, &mut i, &names) {
                 app.ui.tune.preset = i;
@@ -62,7 +63,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 
 fn cpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
-    let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
+    let snap = app.v.snap.clone();
     let idx = app.ui.tune.preset;
     card_titled(
         ui,
@@ -90,12 +91,11 @@ fn cpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
             ui.label(faint(ui, turbo, 12.0));
             ui.add_space(6.0);
             hairline(ui);
-            let level = app.cfg.presets[idx].settings.cpu;
+            let level = app.v.config.presets[idx].settings.cpu;
             setting_row(ui, "CPU performance", level.hint(), |ui| {
                 let mut i = CpuLevel::ALL.iter().position(|x| *x == level).unwrap_or(0);
                 if dropdown(ui, "tune-cpu", CONTROL_W, &mut i, &CpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    app.cfg.presets[idx].settings.cpu = CpuLevel::ALL[i];
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.presets[idx].settings.cpu = CpuLevel::ALL[i]);
                 }
             });
             ui.add_space(4.0);
@@ -125,7 +125,7 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
             }
         },
         |ui| {
-            let choice = app.cfg.presets[idx].settings.power;
+            let choice = app.v.config.presets[idx].settings.power;
             setting_row(ui, "Power plan", choice.hint(), |ui| {
                 let mut i = PowerChoice::ALL.iter().position(|x| *x == choice).unwrap_or(0);
                 if dropdown(
@@ -135,14 +135,14 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                     &mut i,
                     &PowerChoice::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>(),
                 ) {
-                    app.cfg.presets[idx].settings.power = PowerChoice::ALL[i];
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.presets[idx].settings.power = PowerChoice::ALL[i]);
                 }
             });
             hairline(ui);
             ui.label(faint(ui, "Plans on this PC", 12.0));
-            let plans = app.plans.clone();
-            for pl in &plans {
+            let hw = app.v.hardware.clone();
+            let plans = &hw.plans;
+            for pl in plans {
                 ui.horizontal(|ui| {
                     let p = app.pal();
                     let (r, _) = ui.allocate_exact_size(vec2(16.0, 20.0), egui::Sense::hover());
@@ -160,7 +160,7 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                             .clicked()
                         {
                             if power::set_active(&pl.guid) {
-                                app.refresh_hardware();
+                                app.send(Intent::RefreshHardware);
                             } else {
                                 app.toast_err("Windows refused the change");
                             }
@@ -174,29 +174,29 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                 .on_hover_text("Builds a copy of your current plan with CatalyX's settings; your own plan is never edited.")
                 .clicked()
             {
-                let level = app.cfg.presets[idx].settings.cpu;
+                let level = app.v.config.presets[idx].settings.cpu;
                 let cur = power::active().unwrap_or_default();
                 if power::ensure_boost_plan(if level == CpuLevel::Off { CpuLevel::Boost } else { level }, &cur) {
                     app.toast_ok("CatalyX plan is ready");
                 } else {
                     app.toast_err("Windows would not create the plan");
                 }
-                app.refresh_hardware();
+                app.send(Intent::RefreshHardware);
             }
         },
     );
     if refresh {
-        app.refresh_hardware();
+        app.send(Intent::RefreshHardware);
     }
 }
 
 fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
     let idx = app.ui.tune.preset;
-    let st = app.gpu.clone();
-    let live = app.live.clone();
-    let limit = app.cfg.gpu_temp_limit_c;
-    let app_admin = app.admin;
+    let st = app.v.hardware.gpu.clone();
+    let live = app.v.hardware.live.clone();
+    let limit = app.v.config.gpu_temp_limit_c;
+    let app_admin = app.v.system.admin;
     let mut refresh = false;
     card_titled(
         ui,
@@ -273,7 +273,7 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
             ));
             let (sc, sm) = gpu::planned(&st, GpuLevel::Safe);
             let (bc, bm) = gpu::planned(&st, GpuLevel::Balanced);
-            let level = app.cfg.presets[idx].settings.gpu;
+            let level = app.v.config.presets[idx].settings.gpu;
             let hint = match level {
                 GpuLevel::Off => "Clocks untouched".to_string(),
                 GpuLevel::Safe => format!("Core +{} / memory +{} MHz", sc / 1000, sm / 1000),
@@ -282,17 +282,15 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
             setting_row(ui, "Graphics tuning", &hint, |ui| {
                 let mut i = GpuLevel::ALL.iter().position(|x| *x == level).unwrap_or(0);
                 if dropdown(ui, "tune-gpu", CONTROL_W, &mut i, &GpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    app.cfg.presets[idx].settings.gpu = GpuLevel::ALL[i];
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.presets[idx].settings.gpu = GpuLevel::ALL[i]);
                 }
             });
             hairline(ui);
             setting_row(ui, "Heat limit", "Clocks go back to normal at once above this temperature", |ui| {
                 let limits = [75u32, 80, 83, 87];
-                let mut i = limits.iter().position(|x| *x == app.cfg.gpu_temp_limit_c).unwrap_or(2);
+                let mut i = limits.iter().position(|x| *x == app.v.config.gpu_temp_limit_c).unwrap_or(2);
                 if dropdown(ui, "tune-heat", CONTROL_W, &mut i, &limits.iter().map(|x| format!("{x} \u{00b0}C")).collect::<Vec<_>>()) {
-                    app.cfg.gpu_temp_limit_c = limits[i];
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.gpu_temp_limit_c = limits[i]);
                 }
             });
             if !app_admin {
@@ -318,6 +316,6 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
         },
     );
     if refresh {
-        app.refresh_hardware();
+        app.send(Intent::RefreshHardware);
     }
 }

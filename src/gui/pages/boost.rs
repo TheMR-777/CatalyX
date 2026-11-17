@@ -2,6 +2,7 @@
 //! attention are shown, and the right-hand card is the plan while idle, the live session while
 //! boosting.
 
+use crate::app::Intent;
 use crate::config::{CpuLevel, GpuLevel, PowerChoice, ProcAction};
 use crate::engine::{Phase, Status};
 use crate::gui::control;
@@ -16,7 +17,7 @@ const SIDE_W: f32 = 320.0;
 const GAP: f32 = 16.0;
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
-    let status = app.status.lock().map(|s| s.clone()).unwrap_or_default();
+    let status = app.v.status.clone();
     page(ui, "boost", 1120.0, |ui| {
         let total = ui.available_width();
         let wide = total >= 820.0;
@@ -53,10 +54,10 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 }
 
 fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
-    let games = app.cfg.games.len();
-    let sel = app.cfg.selected_game.min(games.saturating_sub(1));
-    let game = app.cfg.games.get(sel).cloned();
-    let settings = app.cfg.settings_for(game.as_ref());
+    let games = app.v.config.games.len();
+    let sel = app.v.config.selected_game.min(games.saturating_sub(1));
+    let game = app.v.config.games.get(sel).cloned();
+    let settings = app.v.config.settings_for(game.as_ref());
     // The gauge and the ring sit in this card; the launch bar is drawn along the bottom of the page instead.
     let style = app.control_style();
     let ctl = control::state(app, status);
@@ -100,11 +101,10 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                                 app.tab = Tab::Games;
                             }
                         } else {
-                            let names: Vec<String> = app.cfg.games.iter().map(|g| g.name.clone()).collect();
+                            let names: Vec<String> = app.v.config.games.iter().map(|g| g.name.clone()).collect();
                             let mut i = sel;
                             if dropdown(ui, "boost-game", half, &mut i, &names) {
-                                app.cfg.selected_game = i;
-                                app.mark_dirty();
+                                app.edit(move |cfg| cfg.selected_game = i);
                             }
                         }
                     });
@@ -112,23 +112,27 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         ui.label(faint(ui, "Profile", 12.0));
                         let custom = game.as_ref().map(|g| g.custom.is_some()).unwrap_or(false);
-                        let mut names: Vec<String> = app.cfg.presets.iter().map(|p| p.name.clone()).collect();
+                        let mut names: Vec<String> = app.v.config.presets.iter().map(|p| p.name.clone()).collect();
                         if custom {
                             names.push("Own settings".into());
                         }
-                        let current = game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.cfg.default_preset.clone());
-                        let mut i =
-                            if custom { app.cfg.presets.len() } else { app.cfg.presets.iter().position(|p| p.id == current).unwrap_or(0) };
+                        let current = game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.v.config.default_preset.clone());
+                        let mut i = if custom {
+                            app.v.config.presets.len()
+                        } else {
+                            app.v.config.presets.iter().position(|p| p.id == current).unwrap_or(0)
+                        };
                         if dropdown(ui, "boost-profile", half, &mut i, &names) {
-                            if i < app.cfg.presets.len() {
-                                let id = app.cfg.presets[i].id.clone();
-                                if let Some(g) = app.cfg.games.get_mut(sel) {
-                                    g.preset = id;
-                                    g.custom = None;
-                                } else {
-                                    app.cfg.default_preset = id;
-                                }
-                                app.mark_dirty();
+                            if i < app.v.config.presets.len() {
+                                app.edit(move |cfg| {
+                                    let id = cfg.presets[i].id.clone();
+                                    if let Some(g) = cfg.games.get_mut(sel) {
+                                        g.preset = id;
+                                        g.custom = None;
+                                    } else {
+                                        cfg.default_preset = id;
+                                    }
+                                });
                             } else {
                                 app.ui.prof.target = EditTarget::Game(sel);
                                 app.tab = Tab::Profiles;
@@ -173,10 +177,10 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
 }
 /// Only what needs attention. Nothing at all when everything is in order.
 fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
-    let game = app.cfg.games.get(app.cfg.selected_game).cloned();
-    let rules = app.cfg.apps_for(game.as_ref());
+    let game = app.v.config.games.get(app.v.config.selected_game).cloned();
+    let rules = app.v.config.apps_for(game.as_ref());
     let none_apps = rules.values().all(|a| *a == ProcAction::Keep);
-    let none_svcs = !app.cfg.services_for(game.as_ref()).values().any(|v| *v);
+    let none_svcs = !app.v.config.services_for(game.as_ref()).values().any(|v| *v);
     let idle = status.phase == Phase::Idle;
     #[derive(Clone, Copy)]
     enum Do {
@@ -189,13 +193,13 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
     if status.pending_journal && idle {
         rows.push((Tone::Warn, "A previous boost was interrupted: some changes may still be in place", "Restore now", Do::Restore));
     }
-    if !app.admin {
+    if !app.v.system.admin {
         rows.push((Tone::Warn, "Not running as administrator: services and elevated games are off-limits", "Restart as admin", Do::Admin));
     }
     if none_apps && none_svcs && idle {
         rows.push((Tone::Accent, "No apps or services chosen yet", "Use suggestions", Do::Suggest));
     }
-    if app.cfg.games.is_empty() {
+    if app.v.config.games.is_empty() {
         rows.push((Tone::Accent, "No game added yet", "Add a game", Do::AddGame));
     }
     if rows.is_empty() {
@@ -215,7 +219,7 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
         }
     });
     match act {
-        Some(Do::Restore) => app.restore(),
+        Some(Do::Restore) => app.send(Intent::Restore),
         Some(Do::Admin) => super::settings::relaunch_admin(app),
         Some(Do::Suggest) => {
             super::apply_suggestions(app);
@@ -241,11 +245,12 @@ fn power_summary(s: &crate::config::Settings) -> String {
 /// What a boost with these settings will do: the lines for what is switched on, and how many options are off.
 /// Used by the plan card and by the confirmation before a boost starts.
 pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -> (Vec<String>, usize) {
-    let s = app.cfg.settings_for(game);
-    let rules = app.cfg.apps_for(game);
+    let s = app.v.config.settings_for(game);
+    let rules = app.v.config.apps_for(game);
     let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
     let n_svc = app
-        .cfg
+        .v
+        .config
         .services_for(game)
         .iter()
         .filter(|(name, on)| **on && !crate::config::service_is_protected(name) && crate::services::can_start(name))
@@ -263,7 +268,7 @@ pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -
     add(true, format!("{} game priority{}", s.priority.label(), if s.io_boost { " + disk" } else { "" }));
     let (lo, pa, cl) = (count(ProcAction::Lower), count(ProcAction::Suspend), count(ProcAction::Close));
     add(s.apps && lo + pa + cl > 0, format!("Apps: {lo} lowered, {pa} paused, {cl} closed"));
-    add(s.services && n_svc > 0, format!("{n_svc} services paused{}", if app.admin { "" } else { " (needs admin)" }));
+    add(s.services && n_svc > 0, format!("{n_svc} services paused{}", if app.v.system.admin { "" } else { " (needs admin)" }));
     add(s.lower_others, "Everything else at lowest priority".into());
     add(s.clean_ram, format!("Free memory first{}", if s.purge_standby { " + cached memory" } else { "" }));
     add(s.windows_game_mode, "Windows Game Mode on".into());
@@ -276,7 +281,7 @@ pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -
 /// What this boost will do: only the things that are switched on.
 fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
-    let game = app.cfg.games.get(app.cfg.selected_game).cloned();
+    let game = app.v.config.games.get(app.v.config.selected_game).cloned();
     let (on, off) = plan_lines(app, game.as_ref());
     let mut edit = false;
     card_titled(
@@ -305,12 +310,13 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
     );
     if edit {
         app.ui.prof.target = match game.as_ref() {
-            Some(g) if g.custom.is_some() => EditTarget::Game(app.cfg.selected_game),
+            Some(g) if g.custom.is_some() => EditTarget::Game(app.v.config.selected_game),
             _ => EditTarget::Preset(
-                app.cfg
+                app.v
+                    .config
                     .presets
                     .iter()
-                    .position(|pr| pr.id == game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.cfg.default_preset.clone()))
+                    .position(|pr| pr.id == game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.v.config.default_preset.clone()))
                     .unwrap_or(0),
             ),
         };
@@ -321,7 +327,7 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
 fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
     let p = app.pal();
     let phase = st.phase;
-    let live = app.live.clone();
+    let live = app.v.hardware.live.clone();
     app.drawn.insert("session");
     card(ui, |ui| {
         ui.horizontal(|ui| {
@@ -401,7 +407,7 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
                 ui.label(dim(ui, "Windows desktop is off", 14.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if link_button(ui, "Bring it back").on_hover_text(format!("Or press {}", crate::shell::EXIT_KEYS)).clicked() {
-                        let _ = app.tx.send(crate::engine::Cmd::ExitQuietDesktop);
+                        app.send(Intent::ExitQuietDesktop);
                     }
                 });
             });

@@ -4,6 +4,7 @@
 //! `catalyx.exe` (a window program: double-clicking it never opens a terminal) and `catalyx-cli.exe` (a
 //! console program, for scripts, pipes and agents). Both call `run`.
 
+mod app;
 mod catalog;
 mod cli;
 mod config;

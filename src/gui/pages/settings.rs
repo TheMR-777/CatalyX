@@ -1,11 +1,11 @@
 //! Settings: look, behaviour, administrator start, the optional background watcher, your data.
 
-use crate::engine::Cmd;
+use crate::app::{window, Intent};
 use crate::gui::control::Style;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::{self, alpha, AccentId, ThemeId};
 use crate::gui::widgets::*;
-use crate::gui::{CatalyxApp, Msg, PickFor};
+use crate::gui::{CatalyxApp, PickFor};
 use crate::{config, elevate, ffi, procs};
 use egui::{vec2, RichText, Sense, Stroke, Ui};
 
@@ -14,7 +14,7 @@ use egui::{vec2, RichText, Sense, Stroke, Ui};
 pub fn relaunch_admin(app: &mut CatalyxApp) {
     let started = elevate::launch_ui_via_task() || ffi::relaunch_elevated();
     if started {
-        let _ = app.tx.send(Cmd::Restore);
+        app.send(Intent::Restore);
         std::thread::sleep(std::time::Duration::from_millis(400));
         std::process::exit(0);
     } else {
@@ -42,7 +42,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
             let dark = app.dark_mode();
             let cur = app.theme_id();
             let accent = app.accent_id();
-            let tint = app.cfg.tint;
+            let tint = app.v.config.tint;
 
             // ---- the look: three surface styles, each previewed with the chosen accent and tint
             ui.label(faint(ui, "Look", 12.0));
@@ -89,8 +89,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         pal.text,
                     );
                     if resp.clicked() {
-                        app.cfg.theme = t.key().into();
-                        app.mark_dirty();
+                        app.edit(move |cfg| cfg.theme = t.key().into());
                     }
                     resp.on_hover_text(t.about());
                 }
@@ -117,8 +116,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if resp.on_hover_text(a.label()).clicked() {
-                        app.cfg.accent = a.key().into();
-                        app.mark_dirty();
+                        app.edit(move |cfg| cfg.accent = a.key().into());
                     }
                 }
             });
@@ -129,8 +127,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
             setting_row(ui, "Surface tint", "How much of the accent bleeds into the window, sidebar and cards", |ui| {
                 let mut i = (tint as usize).min(2);
                 if segmented(ui, 214.0, &mut i, &theme::TINT_LABELS) {
-                    app.cfg.tint = i as u8;
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.tint = i as u8);
                 }
             });
             hairline(ui);
@@ -138,20 +135,18 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                 let mut i = Style::ALL.iter().position(|s| *s == app.control_style()).unwrap_or(0);
                 let labels: Vec<&str> = Style::ALL.iter().map(|s| s.label()).collect();
                 if segmented(ui, 280.0, &mut i, &labels) {
-                    app.cfg.boost_control = Style::ALL[i].key().into();
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.boost_control = Style::ALL[i].key().into());
                 }
             });
             hairline(ui);
             setting_row(ui, "Mode", "Dark, light, or follow Windows", |ui| {
-                let mut i = match app.cfg.appearance.as_str() {
+                let mut i = match app.v.config.appearance.as_str() {
                     "light" => 1,
                     "system" => 2,
                     _ => 0,
                 };
                 if segmented(ui, 214.0, &mut i, &["Dark", "Light", "Windows"]) {
-                    app.cfg.appearance = ["dark", "light", "system"][i].into();
-                    app.mark_dirty();
+                    app.edit(move |cfg| cfg.appearance = ["dark", "light", "system"][i].into());
                 }
             });
         },
@@ -164,9 +159,14 @@ fn behaviour(app: &mut CatalyxApp, ui: &mut Ui) {
         "Behaviour",
         |_| {},
         |ui| {
-            let mut changed = false;
+            // The view is read-only: each switch flips a copy of its value and sends the change to the core.
+            let c = app.v.config.clone();
+            let (mut restore, mut keep_off, mut reopen, mut confirm, mut auto) =
+                (c.restore_when_game_closes, c.keep_apps_off, c.reopen_closed_apps, c.confirm_boost, c.auto_boost_known_games);
             setting_row(ui, "Restore when the game closes", "Everything is put back automatically, after a short grace period", |ui| {
-                changed |= ui.add(egui_components::Switch::new(&mut app.cfg.restore_when_game_closes)).changed();
+                if ui.add(egui_components::Switch::new(&mut restore)).changed() {
+                    app.edit(move |cfg| cfg.restore_when_game_closes = restore);
+                }
             });
             hairline(ui);
             setting_row(
@@ -174,36 +174,38 @@ fn behaviour(app: &mut CatalyxApp, ui: &mut Ui) {
                 "Keep chosen apps and services off",
                 "If one starts again while you play, it is closed or stopped again",
                 |ui| {
-                    changed |= ui.add(egui_components::Switch::new(&mut app.cfg.keep_apps_off)).changed();
+                    if ui.add(egui_components::Switch::new(&mut keep_off)).changed() {
+                        app.edit(move |cfg| cfg.keep_apps_off = keep_off);
+                    }
                 },
             );
             hairline(ui);
             setting_row(ui, "Reopen closed apps afterwards", "Closed apps start again, but unsaved work is gone either way", |ui| {
-                changed |= ui.add(egui_components::Switch::new(&mut app.cfg.reopen_closed_apps)).changed();
+                if ui.add(egui_components::Switch::new(&mut reopen)).changed() {
+                    app.edit(move |cfg| cfg.reopen_closed_apps = reopen);
+                }
             });
             hairline(ui);
             setting_row(ui, "Ask before boosting", "A short summary of what is about to change, with a way to switch it off", |ui| {
-                changed |= ui.add(egui_components::Switch::new(&mut app.cfg.confirm_boost)).changed();
+                if ui.add(egui_components::Switch::new(&mut confirm)).changed() {
+                    app.edit(move |cfg| cfg.confirm_boost = confirm);
+                }
             });
             hairline(ui);
             setting_row(ui, "Boost known games when they start", "Boosts games started outside CatalyX while this window is open", |ui| {
-                changed |= ui.add(egui_components::Switch::new(&mut app.cfg.auto_boost_known_games)).changed();
+                if ui.add(egui_components::Switch::new(&mut auto)).changed() {
+                    app.edit(move |cfg| cfg.auto_boost_known_games = auto);
+                }
             });
-            if changed {
-                app.mark_dirty();
-            }
         },
     );
 }
 
 fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
-    // Task Scheduler is asked once (off the UI thread), not on every frame.
-    if app.elevation.is_none() && !app.elevation_busy {
-        app.refresh_elevation();
-    }
-    let (task, watcher) = app.elevation.unwrap_or((false, false));
-    let is_admin = app.admin;
-    let mut changed = false;
+    // Task Scheduler is asked once by the core (off the UI thread) while this page is shown.
+    let (task, watcher) = app.v.system.elevation.unwrap_or((false, false));
+    let is_admin = app.v.system.admin;
+    let mut run_as_admin = app.v.config.run_as_admin;
     let mut job: Option<(&'static str, &'static str)> = None;
     card_titled(
         ui,
@@ -221,7 +223,9 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
                 "Open CatalyX as administrator",
                 "Needed to stop services and to boost games that run as administrator",
                 |ui| {
-                    changed |= ui.add(egui_components::Switch::new(&mut app.cfg.run_as_admin)).changed();
+                    if ui.add(egui_components::Switch::new(&mut run_as_admin)).changed() {
+                        app.edit(move |cfg| cfg.run_as_admin = run_as_admin);
+                    }
                 },
             );
             hairline(ui);
@@ -265,21 +269,10 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
             );
         },
     );
-    if changed {
-        app.mark_dirty();
-    }
     if let Some((args, done)) = job {
-        run_elevated_job(app, args, done);
+        // Runs as administrator (one prompt) off the UI thread; the core reports back in a toast.
+        app.send(Intent::RunElevated { args, done });
     }
-}
-/// Runs a CatalyX command as administrator (one prompt) off the UI thread and reports back.
-fn run_elevated_job(app: &mut CatalyxApp, args: &'static str, done: &'static str) {
-    let admin = app.admin;
-    app.toast_info(if admin { "Working..." } else { "Approve the Windows prompt to continue" });
-    app.spawn(move || {
-        let ok = if admin { ffi::run_self_as_current(args) } else { ffi::run_self_elevated_and_wait(args, 120_000) };
-        Some(if ok { Msg::Info(done.to_string()) } else { Msg::Error("That did not complete (the prompt may have been cancelled)".into()) })
-    });
 }
 
 fn data(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -292,7 +285,7 @@ fn data(app: &mut CatalyxApp, ui: &mut Ui) {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.add(egui_components::Button::secondary("Open folder")).clicked() {
-                    let _ = std::process::Command::new("explorer").arg(config::data_dir()).spawn();
+                    window::open_folder(config::data_dir());
                 }
                 if ui.add(egui_components::Button::secondary("Export settings...")).clicked() {
                     app.pick_file(PickFor::ExportConfig);

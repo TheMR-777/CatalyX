@@ -9,7 +9,8 @@
 //! independent watchdog thread (see `main.rs`) that ends the process whatever the window does.
 //! Only the self-test's own stand-in game is touched; nothing else on the PC changes.
 
-use crate::engine::{Cmd, Phase};
+use crate::app::Intent;
+use crate::engine::Phase;
 use crate::gui::{CatalyxApp, Tab};
 use crate::{ffi, procs};
 use serde_json::json;
@@ -77,7 +78,7 @@ impl SelfTest {
         match self.stage {
             // Wait for the first live readings.
             0 => {
-                let ready = app.snap.lock().map(|s| s.serial >= 2 && !s.procs.is_empty()).unwrap_or(false);
+                let ready = app.v.snap.serial >= 2 && !app.v.snap.procs.is_empty();
                 if ready || waited > Duration::from_secs(15) {
                     app.tab = Tab::Apps;
                     self.next();
@@ -86,7 +87,7 @@ impl SelfTest {
             // move: Apps (with a real list), then Games.
             1 => {
                 if self.stage_frames == 6 {
-                    let rows = app.snap.lock().map(|s| s.procs.len()).unwrap_or(0);
+                    let rows = app.v.snap.procs.len();
                     let drawn = app.drawn.contains("apps");
                     self.apps_ok = drawn && rows > 0 && app.tab == Tab::Apps;
                     self.apps_rows = rows;
@@ -108,10 +109,10 @@ impl SelfTest {
             }
             // act: boost a .bat game for real (priority only) and watch it through.
             2 => {
-                let st = app.status.lock().map(|s| s.clone()).unwrap_or_default();
+                let st = app.v.status.clone();
                 if !st.game_exe.is_empty() && self.found.is_empty() {
                     self.found = st.game_exe.clone();
-                    let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
+                    let snap = app.v.snap.clone();
                     self.helper = snap
                         .find(st.game_pid)
                         .filter(|p| p.name_lower == "catalyx-testgame.exe" && p.start + 3 >= self.launched_at)
@@ -121,7 +122,7 @@ impl SelfTest {
                     self.priority_seen = procs::get_priority(st.game_pid);
                 }
                 if !self.restore_sent && (self.priority_seen.is_some() || (!self.found.is_empty() && waited > Duration::from_secs(14))) {
-                    let _ = app.tx.send(Cmd::Restore);
+                    app.send(Intent::Restore);
                     self.restore_sent = true;
                 }
                 let done = (self.restore_sent && st.phase == Phase::Idle && st.restored_runs > 0) || waited > Duration::from_secs(30);
@@ -155,7 +156,7 @@ impl SelfTest {
             }
             // hud: the Boost page with its meters, button and session card.
             3 if self.stage_frames >= 10 => {
-                let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
+                let snap = app.v.snap.clone();
                 let d = &app.drawn;
                 let ok = d.contains("stats") && d.contains("session") && d.contains("boost_control") && snap.serial >= 2;
                 self.step(
@@ -212,7 +213,10 @@ impl SelfTest {
             lower_others: false,
             quiet_desktop: false,
         };
-        app.cfg.games.push(crate::config::Game {
+        // The boost goes through the core like any other, without the summary (this run's config is never
+        // saved); the engine knows the stand-in by its id "selftest".
+        app.edit(|cfg| cfg.confirm_boost = false);
+        let idx = app.core.add_selftest_game(crate::config::Game {
             id: "selftest".into(),
             name: "Self-test game".into(),
             launch: bat.to_string_lossy().to_string(),
@@ -220,12 +224,9 @@ impl SelfTest {
             custom: Some(only_priority),
             ..Default::default()
         });
-        app.cfg.selected_game = app.cfg.games.len() - 1;
         self.bat = Some(bat);
-        let g = app.cfg.games.last().cloned();
-        let req = app.request_for(g.as_ref(), None);
         self.launched_at = procs::now_secs();
-        let _ = app.tx.send(Cmd::Boost(Box::new(req)));
+        app.send(Intent::Boost { game: Some(idx) });
         app.tab = Tab::Boost;
     }
 
@@ -233,7 +234,7 @@ impl SelfTest {
     fn cleanup(&mut self, app: &mut CatalyxApp) {
         if let Some((pid, start)) = self.helper.take() {
             if procs::same_process(pid, start) {
-                let snap = app.snap.lock().map(|s| s.clone()).unwrap_or_default();
+                let snap = app.v.snap.clone();
                 if let Some(p) = snap.find(pid) {
                     if let Some(cmd) =
                         snap.procs.iter().find(|c| c.pid == p.parent && c.name_lower == "cmd.exe" && c.start + 3 >= self.launched_at)

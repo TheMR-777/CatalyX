@@ -2,7 +2,7 @@
 //! gentlest way Windows offers (dependents first, short time limit) and started again afterwards.
 
 use crate::catalog::{self, Impact};
-use crate::config::service_is_protected;
+use crate::config::{service_is_protected, Config};
 use crate::gui::icons::{self, Ico};
 use crate::gui::pages::Confirm;
 use crate::gui::widgets::*;
@@ -18,39 +18,43 @@ pub struct SvcUi {
 
 fn scope_game(app: &CatalyxApp) -> Option<usize> {
     let s = app.ui.svc.scope;
-    (s > 0 && s <= app.cfg.games.len()).then(|| s - 1)
+    (s > 0 && s <= app.v.config.games.len()).then(|| s - 1)
 }
 
 fn effective(app: &CatalyxApp, game: Option<usize>, name: &str) -> bool {
-    let rules = app.cfg.services_for(game.and_then(|i| app.cfg.games.get(i)));
+    let rules = app.v.config.services_for(game.and_then(|i| app.v.config.games.get(i)));
     rules.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false)
 }
 
 fn set_rule(app: &mut CatalyxApp, game: Option<usize>, name: &str, on: bool) {
+    let name = name.to_string();
+    app.edit(move |cfg| set_rule_in(cfg, game, &name, on));
+}
+
+fn set_rule_in(cfg: &mut Config, game: Option<usize>, name: &str, on: bool) {
     match game {
         None => {
-            let key = app.cfg.services.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
-            app.cfg.services.insert(key, on);
+            let key = cfg.services.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
+            cfg.services.insert(key, on);
         }
         Some(i) => {
-            let global = app.cfg.services.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false);
+            let global = cfg.services.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false);
             if on == global {
-                app.cfg.games[i].services.retain(|k, _| !k.eq_ignore_ascii_case(name));
+                cfg.games[i].services.retain(|k, _| !k.eq_ignore_ascii_case(name));
             } else {
-                app.cfg.games[i].services.insert(name.to_string(), on);
+                cfg.games[i].services.insert(name.to_string(), on);
             }
         }
     }
-    app.mark_dirty();
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
-    if app.ui.svc.scope > app.cfg.games.len() {
+    if app.ui.svc.scope > app.v.config.games.len() {
         app.ui.svc.scope = 0;
     }
     let game = scope_game(app);
     centered(ui, 1120.0, |ui, w| {
-        if !app.admin {
+        if !app.v.system.admin {
             let mut go = false;
             card(ui, |ui| {
                 go = notice_row(ui, Tone::Warn, "Stopping a Windows service needs administrator rights", Some("Restart as admin"));
@@ -62,7 +66,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing = vec2(16.0, 8.0);
             let mut scopes: Vec<String> = vec!["All games".into()];
-            scopes.extend(app.cfg.games.iter().map(|g| g.name.clone()));
+            scopes.extend(app.v.config.games.iter().map(|g| g.name.clone()));
             let mut s = app.ui.svc.scope;
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -104,7 +108,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
 
 fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
     let p = app.pal();
-    let rules = app.cfg.services_for(game.and_then(|i| app.cfg.games.get(i)));
+    let rules = app.v.config.services_for(game.and_then(|i| app.v.config.games.get(i)));
     let on_count = rules.values().filter(|v| **v).count();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -118,9 +122,11 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
                 .clicked()
             {
                 // Switches the recommended ones ON (for all games); nothing else is touched.
-                for s in catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended) {
-                    set_rule(app, None, s.name, true);
-                }
+                app.edit(|cfg| {
+                    for s in catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended) {
+                        set_rule_in(cfg, None, s.name, true);
+                    }
+                });
                 app.toast_ok("Recommended services selected");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Keep all running").small()).clicked() {
@@ -133,7 +139,7 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
 fn list(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, _w: f32) {
     let f = app.ui.svc.filter.trim().to_lowercase();
     let view = app.ui.svc.view;
-    let all = app.svc_list.clone();
+    let all = app.v.services.clone();
     let mut rows: Vec<&crate::services::ServiceInfo> = all
         .iter()
         .filter(|s| {

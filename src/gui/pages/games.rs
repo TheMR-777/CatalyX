@@ -1,12 +1,13 @@
 //! Games: your library. Add by browsing, by dropping a file on the window, or by importing what
 //! Steam, Epic and GOG already installed. Each game has its own profile and real-program setting.
 
+use crate::app::{window, Intent};
 use crate::config::Game;
 use crate::engine::Phase;
 use crate::gui::icons::Ico;
 use crate::gui::widgets::*;
-use crate::gui::{CatalyxApp, EditTarget, Msg, PickFor, Tab};
-use crate::{launcher, library};
+use crate::gui::{CatalyxApp, EditTarget, PickFor, Tab};
+use crate::library;
 use egui::{vec2, Align, Layout, RichText, ScrollArea, Ui};
 use std::collections::HashMap;
 
@@ -16,46 +17,13 @@ pub struct GamesUi {
     pub name: String,
     pub path: String,
     pub args: String,
-    pub installed: Option<Vec<library::Installed>>,
-    pub scanning: bool,
-    pub candidates: HashMap<String, Vec<(String, u64)>>,
     pub manual_exe: HashMap<String, String>,
 }
 
-/// Adds a game from a path or store link (used by the form, drag-and-drop and the importer).
-pub fn add_game(app: &mut CatalyxApp, path: &str, name: Option<String>) {
-    let path = path.trim().trim_matches('"').to_string();
-    if path.is_empty() {
-        return;
-    }
-    let is_link = path.contains("://");
-    if !is_link && !std::path::Path::new(&path).exists() {
-        app.toast_err(format!("File not found: {path}"));
-        return;
-    }
-    let ext = std::path::Path::new(&path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if !is_link && !matches!(ext.as_str(), "exe" | "bat" | "cmd" | "lnk" | "url") {
-        app.toast_err("Games are .exe, .bat, .cmd, shortcut (.lnk/.url) files or store links");
-        return;
-    }
-    if app.cfg.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&path)) {
-        app.toast_info("That game is already in your library");
-        return;
-    }
-    let name = name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(path.clone()));
-    let id = app.cfg.new_id("game");
-    let preset = app.cfg.default_preset.clone();
-    app.cfg.games.push(Game { id: id.clone(), name: name.clone(), launch: path.clone(), preset, ..Default::default() });
-    app.cfg.selected_game = app.cfg.games.len() - 1;
-    app.mark_dirty();
-    app.toast_ok(format!("Added {name}"));
-    if !is_link {
-        // Work out the real program behind a launcher or batch file while the person carries on.
-        let p = path.clone();
-        app.spawn(move || Some(Msg::Predicted { id, exe: launcher::predict_real_exe(&p).unwrap_or_default() }));
-    }
+/// Adds a game from a path or store link (the core checks it, says so in a toast, and works out the
+/// real program behind a launcher).
+pub fn add_game(app: &mut CatalyxApp, path: &str, name: Option<String>, real_exe: Option<String>) {
+    app.send(Intent::AddGame { path: path.to_string(), name, real_exe });
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -67,14 +35,13 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
             if ui.add(egui_components::Button::primary("Add a game")).clicked() {
                 app.ui.games.adding = !app.ui.games.adding;
             }
-            let scanning = app.ui.games.scanning;
+            let scanning = app.v.library.scanning;
             if ui
                 .add_enabled(!scanning, egui_components::Button::secondary(if scanning { "Looking..." } else { "Find installed games" }))
                 .on_hover_text("Reads what Steam, Epic Games and GOG have installed. Nothing is started or changed.")
                 .clicked()
             {
-                app.ui.games.scanning = true;
-                app.spawn(|| Some(Msg::Installed(library::scan())));
+                app.send(Intent::ScanLibrary);
             }
             ui.label(faint(ui, "or drop a game file on this window", 12.0));
         });
@@ -84,12 +51,12 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
         }
         installed_list(app, ui);
 
-        if app.cfg.games.is_empty() && !app.ui.games.adding {
+        if app.v.config.games.is_empty() && !app.ui.games.adding {
             card(ui, |ui| {
                 empty_state(ui, Ico::Gamepad, "No games yet", "Add one above, drop a file here, or find what is already installed.");
             });
         }
-        let n = app.cfg.games.len();
+        let n = app.v.config.games.len();
         for i in 0..n {
             game_row(app, ui, i);
         }
@@ -124,11 +91,14 @@ fn add_form(app: &mut CatalyxApp, ui: &mut Ui) {
                     let path = std::mem::take(&mut app.ui.games.path);
                     let name = std::mem::take(&mut app.ui.games.name);
                     let args = std::mem::take(&mut app.ui.games.args);
-                    add_game(app, &path, Some(name));
+                    add_game(app, &path, Some(name), None);
                     if !args.trim().is_empty() {
-                        if let Some(g) = app.cfg.games.last_mut() {
-                            g.args = args;
-                        }
+                        // As before the core split: the arguments go to the last game in the library.
+                        app.edit(move |cfg| {
+                            if let Some(g) = cfg.games.last_mut() {
+                                g.args = args;
+                            }
+                        });
                     }
                     app.ui.games.adding = false;
                 }
@@ -141,7 +111,8 @@ fn add_form(app: &mut CatalyxApp, ui: &mut Ui) {
 }
 
 fn installed_list(app: &mut CatalyxApp, ui: &mut Ui) {
-    let Some(list) = app.ui.games.installed.clone() else { return };
+    let library = app.v.library.clone();
+    let Some(list) = library.installed.as_ref() else { return };
     let p = app.pal();
     let mut hide = false;
     card_titled(
@@ -157,8 +128,8 @@ fn installed_list(app: &mut CatalyxApp, ui: &mut Ui) {
                 ui.label(faint(ui, "No Steam, Epic or GOG games were found on this PC.", 12.0));
             }
             ScrollArea::vertical().id_salt("installed").max_height(280.0).auto_shrink([false, true]).show(ui, |ui| {
-                for it in &list {
-                    let have = app.cfg.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&it.launch));
+                for it in list {
+                    let have = app.v.config.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&it.launch));
                     ui.horizontal(|ui| {
                         letter_tile(ui, &it.name, 28.0);
                         ui.vertical(|ui| {
@@ -170,14 +141,7 @@ fn installed_list(app: &mut CatalyxApp, ui: &mut Ui) {
                             if have {
                                 ui.label(RichText::new("Added").size(12.0).color(p.ok));
                             } else if ui.add(egui_components::Button::secondary("Add").small()).clicked() {
-                                let launch = it.launch.clone();
-                                let exe = it.real_exe.clone();
-                                add_game(app, &launch, Some(it.name.clone()));
-                                if let Some(g) = app.cfg.games.last_mut() {
-                                    if g.launch == launch {
-                                        g.real_exe = exe;
-                                    }
-                                }
+                                add_game(app, &it.launch, Some(it.name.clone()), Some(it.real_exe.clone()));
                             }
                             chip(ui, it.store, Tone::Neutral);
                         });
@@ -185,33 +149,27 @@ fn installed_list(app: &mut CatalyxApp, ui: &mut Ui) {
                 }
             });
             let missing: Vec<library::Installed> =
-                list.iter().filter(|it| !app.cfg.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&it.launch))).cloned().collect();
+                list.iter().filter(|it| !app.v.config.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&it.launch))).cloned().collect();
             if missing.len() > 1 {
                 ui.add_space(6.0);
                 if ui.add(egui_components::Button::secondary(format!("Add all {}", missing.len()))).clicked() {
                     for it in missing {
-                        let launch = it.launch.clone();
-                        add_game(app, &launch, Some(it.name.clone()));
-                        if let Some(g) = app.cfg.games.last_mut() {
-                            if g.launch == launch {
-                                g.real_exe = it.real_exe;
-                            }
-                        }
+                        add_game(app, &it.launch, Some(it.name), Some(it.real_exe));
                     }
                 }
             }
         },
     );
     if hide {
-        app.ui.games.installed = None;
+        app.send(Intent::HideInstalled);
     }
 }
 
 fn game_row(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
     let p = app.pal();
-    let g = app.cfg.games[i].clone();
+    let g = app.v.config.games[i].clone();
     let active = app.phase() != Phase::Idle;
-    let selected = app.cfg.selected_game == i;
+    let selected = app.v.config.selected_game == i;
     egui::Frame::new()
         .fill(p.panel)
         .stroke(egui::Stroke::new(1.0, if selected { crate::gui::theme::alpha(p.accent, 90) } else { p.line }))
@@ -231,7 +189,8 @@ fn game_row(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
                         } else {
                             chip(ui, &g.real_exe, Tone::Accent);
                         }
-                        let prof = if g.custom.is_some() { "Own settings".to_string() } else { app.cfg.preset(&g.preset).name.clone() };
+                        let prof =
+                            if g.custom.is_some() { "Own settings".to_string() } else { app.v.config.preset(&g.preset).name.clone() };
                         chip(ui, &prof, Tone::Neutral);
                         if g.plays > 0 {
                             ui.label(faint(ui, format!("{} plays", g.plays), 12.0));
@@ -243,7 +202,8 @@ fn game_row(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
                         app.confirm = Some(crate::gui::pages::Confirm::RemoveGame(i));
                     }
                     if ui.add_enabled(!active, egui_components::Button::primary("Boost & play")).clicked() {
-                        app.boost_game(Some(i));
+                        // Through the boost policy like every other boost: the summary first when asked for.
+                        app.request_boost(Some(i));
                         app.tab = Tab::Boost;
                     }
                 });
@@ -255,46 +215,40 @@ fn game_row(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
 }
 
 fn details(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
-    let g = app.cfg.games[i].clone();
+    let g = app.v.config.games[i].clone();
     let w = ui.available_width().min(560.0);
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.label(dim(ui, "Name", 14.0));
     let mut name = g.name.clone();
     if ui.add(egui_components::Input::new(&mut name).width(w)).changed() && !name.trim().is_empty() {
-        app.cfg.games[i].name = name;
-        app.mark_dirty();
+        app.edit(move |cfg| cfg.games[i].name = name);
     }
     ui.label(dim(ui, "Game file or link", 14.0));
     let mut launch = g.launch.clone();
     if ui.add(egui_components::Input::new(&mut launch).width(w)).changed() {
-        app.cfg.games[i].launch = launch;
-        app.mark_dirty();
+        app.edit(move |cfg| cfg.games[i].launch = launch);
     }
     ui.label(dim(ui, "Arguments", 14.0));
     let mut args = g.args.clone();
     if ui.add(egui_components::Input::new(&mut args).placeholder("(none)").width(w)).changed() {
-        app.cfg.games[i].args = args;
-        app.mark_dirty();
+        app.edit(move |cfg| cfg.games[i].args = args);
     }
     ui.label(dim(ui, "Real game program (what gets the boost)", 14.0));
     // Candidates are read from the game's folder once, off the UI thread.
     let folder = game_folder(&g);
-    if !folder.is_empty() && !app.ui.games.candidates.contains_key(&g.id) {
-        app.ui.games.candidates.insert(g.id.clone(), Vec::new());
-        let id = g.id.clone();
-        let scan = folder.clone();
-        app.spawn(move || Some(Msg::Candidates { list: launcher::candidates(&scan), id }));
+    if !folder.is_empty() && !app.v.library.candidates.contains_key(&g.id) {
+        app.send(Intent::FindCandidates { id: g.id.clone(), folder: folder.clone() });
     }
     let mut options: Vec<String> = vec!["Find it automatically on launch".into()];
-    let cands = app.ui.games.candidates.get(&g.id).cloned().unwrap_or_default();
+    let cands = app.v.library.candidates.get(&g.id).cloned().unwrap_or_default();
     for (n, size) in cands.iter().take(40) {
         options.push(format!("{n}  ({:.0} MB)", *size as f64 / 1048576.0));
     }
     let mut cur =
         if g.real_exe.is_empty() { 0 } else { cands.iter().take(40).position(|(n, _)| *n == g.real_exe).map(|x| x + 1).unwrap_or(0) };
     if dropdown(ui, &format!("real-{}", g.id), w, &mut cur, &options) {
-        app.cfg.games[i].real_exe = if cur == 0 { String::new() } else { cands[cur - 1].0.clone() };
-        app.mark_dirty();
+        let exe = if cur == 0 { String::new() } else { cands[cur - 1].0.clone() };
+        app.edit(move |cfg| cfg.games[i].real_exe = exe);
     }
     let mut manual = app.ui.games.manual_exe.get(&g.id).cloned().unwrap_or_else(|| g.real_exe.clone());
     let mut use_manual = false;
@@ -305,22 +259,23 @@ fn details(app: &mut CatalyxApp, ui: &mut Ui, i: usize) {
         }
     });
     if use_manual {
-        app.cfg.games[i].real_exe = crate::config::file_name_lower(&manual);
-        app.mark_dirty();
+        let exe = crate::config::file_name_lower(&manual);
+        app.edit(move |cfg| cfg.games[i].real_exe = exe);
     }
     app.ui.games.manual_exe.insert(g.id.clone(), manual);
     ui.horizontal(|ui| {
         if ui.add(egui_components::Button::secondary("Edit this game's settings")).clicked() {
-            if app.cfg.games[i].custom.is_none() {
-                let s = app.cfg.settings_for(Some(&app.cfg.games[i]));
-                app.cfg.games[i].custom = Some(s);
-                app.mark_dirty();
+            if app.v.config.games[i].custom.is_none() {
+                app.edit(move |cfg| {
+                    let s = cfg.settings_for(Some(&cfg.games[i]));
+                    cfg.games[i].custom = Some(s);
+                });
             }
             app.ui.prof.target = EditTarget::Game(i);
             app.tab = Tab::Profiles;
         }
         if !folder.is_empty() && ui.add(egui_components::Button::ghost("Open folder")).clicked() {
-            let _ = std::process::Command::new("explorer").arg(&folder).spawn();
+            window::open_folder(&folder);
         }
     });
     let _ = vec2(0.0, 0.0);
