@@ -176,12 +176,14 @@ Interests are about *data*, not page names, so a skin may arrange its pages howe
 ### Upkeep: the core keeps working when the window does not draw
 
 A minimised window gets no frames, so nothing the program must keep doing may depend on the skin drawing. The
-engine already runs on its own thread (it notices a closed game and restores, whatever the window does). The rest of
-the upkeep moves to a core thread too: the debounced save, recording a learned game program, and the auto-boost scan
-for games started outside CatalyX. That thread sleeps on a channel and wakes only for real work: a pending save, the
-3 s auto-boost scan (only when that option is on and no boost is active), a running boost, or live readings a skin
-says it is showing. Today all three stop while the window is minimised (by reading the code; to be confirmed with a
-test before the change). The cost is measured before and after: the minimised figures are a release gate.
+engine already runs on its own thread (it notices a closed game and restores, whatever the window does). The rest
+of the upkeep runs on a core thread driven by deadlines and kicks (an intent, a hint, a job result, an engine
+status change, a monitor sample): the debounced save, recording a learned game program, the auto-boost scan for
+games started outside CatalyX (every 3 s, also while minimised, and only once a game has a known program),
+live readings only while a skin says it shows them and the window draws, the close-before-restore dance, and
+the memory trims. That thread wakes the skin only when the view changed and the window is not minimised.
+Sampled readings share one draw cadence (2 s idle, 0.6 s while boosting), so two sources do not draw twice as
+often; a job result or an event is shown at once.
 
 ### The settings catalogue
 

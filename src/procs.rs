@@ -79,7 +79,6 @@ static ON_SAMPLE: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 
 /// Sets the hook the sampler calls after each new snapshot. Only the first call counts: there is
 /// one listener per process (the core).
-#[allow(dead_code)] // the core's upkeep thread connects to it next (Phase 1a T2b)
 pub fn set_on_sample(f: impl Fn() + Send + Sync + 'static) {
     let _ = ON_SAMPLE.set(Box::new(f));
 }

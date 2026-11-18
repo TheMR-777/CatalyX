@@ -18,6 +18,11 @@ will differ on yours, mainly because the graphics driver differs.
 | `catalyx watch` (no window) | 1.3 MB | 0.1-0.3% |
 | Guard process (only while the desktop is off) | 1.9 MB | ~0% |
 
+When the upkeep moved off the frame loop (the 0.5.0 work), it was measured beside a rebuild of the 0.4.2
+code on the same machine: minimised 0.156% of a core and 1.7 MB private (0.4.2: 0.156%, 1.8 MB); open
+idle 0.4-0.7% (0.4.2 on the same day 0.3-0.9%; the recorded baseline 0.469%). The one extra thread is the
+upkeep. The peak between trims was 12-15 MB private (0.4.2: 12 MB); both return to 5-8 MB at the trim.
+
 ## Startup
 
 Measured with `CATALYX_TRACE=1` (see below) on the same PC. The window appears **fully drawn about 250-285 ms after
@@ -50,18 +55,22 @@ appends one line per milestone to `%TEMP%\catalyx-startup.txt`.
 
 ## What keeps it small
 
-1. **Draw only when something changed.** A 2 s tick for the live meters (0.6 s while boosting) and *no*
-   repaints while minimised.
+1. **Draw only when something changed, at the old visible cadence.** The core's upkeep thread samples on its
+   own deadlines but wakes the window for new readings at most every 2 s (0.6 s while boosting or closing),
+   so the process monitor and the graphics card do not draw twice as often. A job result or an event wakes it
+   at once; a minimised window draws nothing and is not woken.
 2. **Trim.** Every 30 s the working set is handed back to Windows (pages the window is not using right now:
    driver and font pages needed only while drawing). Pages return on demand, a few at a time. Trimming moves
    pages to Windows' standby list; they are still in RAM until something else needs them.
-3. **Trim on minimise.** A minimised window never runs its frame logic again, so the 30 s timer never fires
-   for it. CatalyX trims once, 1.5 s after the minimise (this was a measured bug: before the fix a minimised
-   window stayed at ~70 MB private).
+3. **Trim on minimise.** The 30 s timer is not what matters at the moment a game goes fullscreen, so CatalyX
+   trims once, 1.5 s after the minimise, from the upkeep thread (this was a measured bug: before the fix a
+   minimised window stayed at ~70 MB private).
 4. **No polling.** The watcher sleeps for 3 s at a time on a Windows event that Ctrl+C signals (before: it woke
    7 times a second to check a flag, which was most of its CPU).
 5. **Adaptive sampling.** The process monitor samples every 2.5 s normally, every 8 s while minimised, and
-   every 1.5 s only while boosting or on the Apps page. Per-process detail is collected only when shown.
+   every 1.5 s only while boosting or on the Apps page. Per-process detail is collected only when shown. The
+   3 s auto-boost check walks the process list only once a game has a known program; with none there is
+   nothing it could match.
 6. **No helper programs** for readings: NVML for the graphics card, the registry for names.
 
 ## How to measure

@@ -1,5 +1,5 @@
 //! What a skin can ask of the core (`Intent`), what the core asks the skin to show (`Event`), and what
-//! the skin tells the core about each frame (`FrameFacts`, the forerunner of the `Hint`s in docs/SKINS.md).
+//! the skin tells the core about itself (`Hint`). See docs/SKINS.md for the contract.
 
 use crate::config::{Config, CpuLevel};
 
@@ -37,6 +37,8 @@ pub enum Intent {
         folder: String,
     },
     RefreshHardware,
+    /// Ask for the service list now rather than at the next regular refresh.
+    #[allow(dead_code)] // part of the skin contract; the classic skin refreshes through Hint::Interest
     RefreshServices,
     /// Apply the graphics card's Safe step briefly, read it back, undo it.
     TestGraphicsCard,
@@ -109,20 +111,19 @@ pub struct Interest {
     pub own_usage: bool,
 }
 
-/// TRANSITIONAL (Phase 1a T2a, replaced by hints in T2b): what the window knows about this frame.
-#[derive(Clone, Copy, Default, Debug)]
-pub struct FrameFacts {
-    pub interest: Interest,
-    pub minimised: bool,
-    /// The person (or Windows) asked the window to close in this frame.
-    pub close_requested: bool,
-}
-
-/// What a tick asks of the window right now.
-#[derive(Clone, Copy, Default, Debug)]
-pub struct Upkeep {
-    /// Keep the window open: a boost is being put back first (`Event::ReadyToClose` follows).
-    pub cancel_close: bool,
-    /// A close is waiting for the restore to finish.
-    pub closing: bool,
+/// What a skin tells the core about itself: what it is showing, whether it draws at all, and when it
+/// was first seen or is asked to close. Sent only when it changes; the core acts before `hint` returns.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Hint {
+    /// What is on screen, so the core samples only what is shown. About data, not page names.
+    Interest(Interest),
+    /// The window is on screen for the first time: start the probes that must not compete with the
+    /// first frames. Later hints of this kind are ignored.
+    Shown,
+    /// The window is minimised: it draws nothing, so live readings pause and the working set is
+    /// trimmed once shortly after the last frame. False means it draws again.
+    Minimised(bool),
+    /// The person (or Windows) asked the window to close: put a running boost back first, save, then
+    /// answer with `Event::ReadyToClose`. The skin keeps the window open until that arrives.
+    CloseRequested,
 }

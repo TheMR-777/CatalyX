@@ -70,8 +70,9 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
 5. **Tests and checks must never hang** (every wait has a time limit) and **must not disturb a real PC**: use
    `CATALYX_DATA` scratch folders, stand-in games (a renamed copy of `ping.exe` outside the Windows folder),
    `--dry-run`. Never run a real game or a launcher with an anti-cheat driver.
-6. **Minimal footprint.** The window draws only on change and not at all when minimised; no polling loops;
-   think twice before adding a dependency (the dependency list is short on purpose).
+6. **Minimal footprint.** The window draws only on change, sampled readings share one draw cadence (2 s idle,
+   0.6 s while boosting) and nothing is drawn when minimised; no polling loops; think twice before adding a
+   dependency (the dependency list is short on purpose).
 7. **Do not commit** `research/`, `shots/`, `target/` (ignored; `research/` is a private working-notes folder that may
    exist on a maintainer's machine). Do not copy text, numbers or code from other products. Derive facts from
    Microsoft's documentation or from a measurement on a real PC, and cite that.
@@ -104,8 +105,9 @@ dark)`. Check every visual change in dark and light and at the minimum size (760
 
 ## Pitfalls we already hit
 
-- **A minimised egui window gets no more frames.** Anything that must happen while minimised cannot live in
-  `logic()`; see the one-shot trim thread in `gui/mod.rs`.
+- **A minimised egui window gets no more frames.** Anything that must happen while minimised lives on the
+  core's upkeep thread (`src/app/mod.rs`), not in `logic()`: a hint says whether the window draws, and the
+  upkeep wakes it only when there is something new to show.
 - `GetActiveWindow` is per-thread; from another thread use `ffi::our_window()` (finds the window by title).
 - **UAC may be off** (every process elevated, no second token). Code that wants "the ordinary token" must
   fall back to the token the shell already has (`shell.rs`).

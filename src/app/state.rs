@@ -1,7 +1,7 @@
 //! State: everything the window used to own that is not drawing (the config and its saving, the engine
 //! link, probes and their results, the boost policy), and `apply`, which carries out an intent.
 
-use super::intent::{Event, Intent, Tone};
+use super::intent::{Event, Hint, Intent, Interest, Tone};
 use super::jobs::{Done, Job};
 use super::view::{Hardware, Library, System, View};
 use crate::config::{Config, Game, ProcAction};
@@ -41,15 +41,28 @@ pub struct State {
     // automatic boost
     pub(super) auto_ignore: HashSet<u32>,
     pub(super) last_auto_scan: Instant,
-    // closing while a boost is active
+    // what the skin says about itself
+    /// What the skin is showing (set by `Hint::Interest`), so only that is sampled.
+    pub(super) interest: Interest,
+    /// The skin's window is minimised: nothing is drawn, so nothing live is sampled and only real
+    /// changes wake it.
+    pub(super) minimised: bool,
+    /// `Hint::Shown` has been answered: the probes start once, not on every hint.
+    shown: bool,
+    /// Closing while a boost is active
     pub(super) closing: Option<Instant>,
     pub(super) last_trim: Instant,
-    /// The minimised window has been trimmed once (reset when it is restored).
-    pub(super) trimmed_minimized: bool,
+    /// When to trim the working set once after the window was minimised (None = it draws).
+    pub(super) trim_due: Option<Instant>,
     /// The boost the summary is being shown for: only that one may be confirmed.
     awaiting_confirm: Option<Option<usize>>,
     events: VecDeque<Event>,
     pub(super) rev: u64,
+    /// The revision the skin last drew and when sampled readings may wake it again. The old window
+    /// drew live readings at most every 2 s (0.6 s while boosting); two sampled sources must not
+    /// add up to two draws.
+    pub(super) drawn_rev: u64,
+    pub(super) next_live_wake: Instant,
     // View sections that follow other threads: rebuilt when their source moved.
     status_seen: Option<u64>,
     status_view: Arc<Status>,
@@ -92,12 +105,17 @@ impl State {
             library: Arc::new(Library::default()),
             auto_ignore: HashSet::new(),
             last_auto_scan: Instant::now(),
+            interest: Interest::default(),
+            minimised: false,
+            shown: false,
             closing: None,
             last_trim: Instant::now() - Duration::from_secs(10),
-            trimmed_minimized: false,
+            trim_due: None,
             awaiting_confirm: None,
             events: VecDeque::new(),
             rev: 0,
+            drawn_rev: 0,
+            next_live_wake: Instant::now() - Duration::from_secs(1),
             status_seen: None,
             status_view: Arc::new(Status::default()),
             snap_seen: None,
@@ -154,8 +172,43 @@ impl State {
         self.jobs.push(Box::new(job));
     }
 
-    /// The current View, rebuilding only the sections whose source moved.
-    pub(super) fn view(&mut self) -> View {
+    /// Asks the skin to draw again. A minimised window draws nothing, so it is not woken; the first
+    /// frame after it is restored takes in everything at once.
+    pub(super) fn wake_skin(&mut self) {
+        if !self.minimised {
+            self.wake = true;
+        }
+    }
+
+    /// The cadence the old window showed live readings at: quick while a boost runs or a close is
+    /// being answered, slow otherwise. Sampling keeps its own deadlines; this only caps the draws.
+    pub(super) fn live_every(&self) -> Duration {
+        if self.phase().active() || self.closing.is_some() {
+            super::upkeep::LIVE_EVERY_BOOST
+        } else {
+            super::upkeep::LIVE_EVERY
+        }
+    }
+
+    /// The skin has drawn (or is about to): everything in `rev` is accounted for, and sampled
+    /// readings wait one cadence before waking it again.
+    pub(super) fn drawn(&mut self, now: Instant) {
+        self.drawn_rev = self.rev;
+        self.next_live_wake = now + self.live_every();
+    }
+
+    /// A sampled reading changed: wake the skin only when the cadence allows it.
+    pub(super) fn may_draw_live(&mut self, now: Instant) -> bool {
+        if now < self.next_live_wake {
+            return false;
+        }
+        self.drawn(now);
+        true
+    }
+
+    /// Takes in a new engine status or monitor sample and moves `rev` on when either changed. The
+    /// upkeep uses `rev` to tell whether the skin has something new to draw.
+    pub(super) fn sync(&mut self) {
         let r = self.status.rev();
         if self.status_seen != Some(r) {
             self.status_view = Arc::new(self.status.lock().map(|s| s.clone()).unwrap_or_default());
@@ -169,6 +222,57 @@ impl State {
                 self.rev += 1;
             }
         }
+    }
+
+    /// Carries out a hint from the skin. Cheap: anything that samples, saves or trims is left to
+    /// `upkeep`, which the caller kicks next.
+    pub(super) fn apply_hint(&mut self, hint: Hint) {
+        match hint {
+            Hint::Interest(i) => self.interest = i,
+            Hint::Shown => {
+                if !self.shown {
+                    self.shown = true;
+                    // The window is on screen; probing now keeps the work off its first frames.
+                    self.refresh_hardware();
+                    self.refresh_services();
+                }
+            }
+            Hint::Minimised(on) => {
+                if self.minimised != on {
+                    self.minimised = on;
+                    if on {
+                        // The window gets no more frames, so the 30 s timer must not be what does
+                        // the trim that matters: trim once shortly after the last frame instead.
+                        self.trim_due = (!self.selftest).then(|| Instant::now() + super::upkeep::TRIM_AFTER_MINIMISE);
+                    } else {
+                        self.trim_due = None;
+                    }
+                }
+            }
+            Hint::CloseRequested => self.close_now(),
+        }
+    }
+
+    /// The window was asked to close: put Windows back first if a boost is running, then report it
+    /// ready. The skin keeps the window up until `Event::ReadyToClose`.
+    fn close_now(&mut self) {
+        if self.closing.is_some() {
+            return;
+        }
+        if self.phase().active() {
+            self.closing = Some(Instant::now());
+            let _ = self.tx.send(Cmd::Restore);
+        } else {
+            self.save_now();
+            self.event(Event::ReadyToClose);
+        }
+    }
+
+    /// The current View, rebuilding only the sections whose source moved.
+    pub(super) fn view(&mut self) -> View {
+        self.sync();
+        // This call is the skin drawing the current revision: it is not shown again for a sample.
+        self.drawn_rev = self.rev;
         View {
             rev: self.rev,
             config: self.cfg.clone(),
@@ -275,7 +379,7 @@ impl State {
             Some(g) => self.toast(Tone::Info, format!("Boosting and starting {}", g.name)),
             None => self.toast(Tone::Info, "Gaming mode on"),
         }
-        self.wake = true;
+        self.wake_skin();
     }
 
     fn restore(&mut self) {
@@ -284,7 +388,7 @@ impl State {
             self.auto_ignore.insert(pid);
         }
         let _ = self.tx.send(Cmd::Restore);
-        self.wake = true;
+        self.wake_skin();
     }
 
     /// Ends a program the person pointed at. The scan is fresh and every pid is checked against its
@@ -604,5 +708,83 @@ mod tests {
         assert_eq!(c.games[0].services.get(off), None, "a global off choice is inherited");
         assert_eq!(c.services.get(off), Some(&false), "the global choice is untouched");
         assert_eq!(c.games[0].services.get(mine), Some(&false), "the game's own choice is kept");
+    }
+
+    #[test]
+    fn shown_starts_the_probes_once() {
+        let (mut st, _rx) = state();
+        st.apply_hint(Hint::Shown);
+        assert_eq!(st.jobs.len(), 2, "the card and the service list are read once the window is up");
+        st.jobs.clear();
+        st.apply_hint(Hint::Shown);
+        assert!(st.jobs.is_empty(), "a second frame must not probe again");
+    }
+
+    #[test]
+    fn a_close_request_without_a_boost_is_answered_at_once() {
+        let (mut st, rx) = state();
+        st.apply_hint(Hint::CloseRequested);
+        assert!(rx.try_recv().is_err(), "nothing to put back");
+        assert!(matches!(st.take_events().as_slice(), [Event::ReadyToClose]));
+    }
+
+    #[test]
+    fn a_close_request_during_a_boost_restores_before_answering() {
+        let (mut st, rx) = state();
+        if let Ok(mut s) = st.status.lock() {
+            s.phase = Phase::Boosted;
+        }
+        st.apply_hint(Hint::CloseRequested);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Restore)), "the boost is put back first");
+        assert!(st.take_events().is_empty(), "the window stays up while it happens");
+        assert!(st.closing.is_some());
+
+        if let Ok(mut s) = st.status.lock() {
+            s.phase = Phase::Idle;
+        }
+        st.upkeep(Instant::now());
+        assert!(matches!(st.take_events().as_slice(), [Event::ReadyToClose]));
+        assert!(st.closing.is_none(), "the answer is given once");
+    }
+
+    #[test]
+    fn a_minimised_window_is_not_woken_but_is_trimmed_once() {
+        let (mut st, _rx) = state();
+        st.apply_hint(Hint::Minimised(true));
+        let due = st.trim_due.expect("a trim is due shortly after the last frame");
+        st.wake_skin();
+        assert!(!st.wake, "a minimised window draws nothing, so it is not woken");
+
+        let next = st.upkeep(due - Duration::from_millis(1)).expect("the trim has a deadline");
+        assert!(next <= due);
+        assert!(st.trim_due.is_some(), "the trim happens when it is due, not before");
+
+        st.apply_hint(Hint::Minimised(false));
+        assert!(st.trim_due.is_none());
+        st.wake_skin();
+        assert!(st.wake, "a restored window is woken again");
+    }
+
+    #[test]
+    fn live_sources_share_one_draw_cadence() {
+        let (mut st, _rx) = state();
+        let t0 = Instant::now();
+        st.drawn(t0);
+        let cadence = st.live_every();
+        st.rev += 1; // the monitor published a sample
+        assert!(!st.may_draw_live(t0 + Duration::from_millis(100)), "a sample waits for the cadence");
+        assert!(st.may_draw_live(t0 + cadence), "the first sample after it is drawn");
+        let next = st.next_live_wake;
+        st.rev += 1; // the card was read a moment later
+        assert!(!st.may_draw_live(t0 + cadence + Duration::from_millis(100)), "two sources share one draw");
+        assert!(st.may_draw_live(next), "and the next cadence shows everything new");
+    }
+
+    #[test]
+    fn drawing_marks_the_revision_it_shows() {
+        let (mut st, _rx) = state();
+        st.rev = 7;
+        let _ = st.view();
+        assert_eq!(st.drawn_rev, st.rev, "a drawn revision is not drawn again for a sample");
     }
 }

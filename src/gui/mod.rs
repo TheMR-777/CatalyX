@@ -4,10 +4,10 @@
 //! the start of each frame and after each change), changes things only through `send` (and, for now,
 //! `edit`), and shows the core's events (toasts, the boost summary, closing).
 //!
-//! Footprint rules: the window draws only when something changed (input, a background result,
-//! or a slow 2 s tick for the live meters); a minimised window asks for nothing; per-process
-//! scans only run while the Apps page is open or a boost is active; every blocking job (file
-//! dialogs, hardware probes, library scans) runs on its own short-lived thread.
+//! Footprint rules: the window draws only when something changed. The core wakes it for background
+//! results and fresh readings, and never while it is minimised; per-process scans only run while the
+//! Apps page is open or a boost is active; every blocking job (file dialogs, hardware probes, library
+//! scans) runs on its own short-lived thread.
 
 mod checks;
 mod chrome;
@@ -18,7 +18,7 @@ mod pages;
 mod theme;
 mod widgets;
 
-use crate::app::{self, Core, CoreOptions, Event, FrameFacts, Intent, Interest, View};
+use crate::app::{self, Core, CoreOptions, Event, Hint, Intent, Interest, View};
 use crate::config::Config;
 use crate::engine::Phase;
 use crate::{ffi, procs};
@@ -107,6 +107,9 @@ pub struct CatalyxApp {
     /// The window starts hidden and is shown after its first frame is drawn (no empty frame on screen).
     /// 0 = nothing drawn yet, 1 = first frame drawn, 2 = shown.
     pub reveal_step: u8,
+    /// What the core was last told this window shows, and whether it is minimised.
+    last_interest: Interest,
+    last_minimised: bool,
     // checks
     pub drawn: HashSet<&'static str>,
     selftest: Option<crate::selftest::SelfTest>,
@@ -172,6 +175,8 @@ impl CatalyxApp {
             confirm: None,
             boost_dont_ask: false,
             reveal_step: if check_run { 2 } else { 0 },
+            last_interest: Interest::default(),
+            last_minimised: false,
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
@@ -182,8 +187,7 @@ impl CatalyxApp {
         crate::trace::mark("app state built");
         if app.reveal_step == 2 {
             // A check run draws at once and needs the data now; a normal start probes after the window is shown.
-            app.send(Intent::RefreshHardware);
-            app.send(Intent::RefreshServices);
+            app.hint(Hint::Shown);
         }
         if !app.v.config.onboarded && !no_save {
             app.confirm = Some(pages::Confirm::Welcome);
@@ -210,8 +214,7 @@ impl CatalyxApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 crate::trace::mark("window shown");
-                self.send(Intent::RefreshHardware);
-                self.send(Intent::RefreshServices);
+                self.hint(Hint::Shown);
             }
             _ => {}
         }
@@ -222,6 +225,14 @@ impl CatalyxApp {
         self.core.send(intent);
         self.v = self.core.view();
         // Toasts come out in the order the actions happened, as when the window made them itself.
+        self.drain_events();
+    }
+
+    /// Tells the core something about the window itself (what it shows, that it is minimised, that it
+    /// was asked to close), then takes whatever that made due.
+    pub fn hint(&mut self, hint: Hint) {
+        self.core.hint(hint);
+        self.v = self.core.view();
         self.drain_events();
     }
 
@@ -354,23 +365,34 @@ impl eframe::App for CatalyxApp {
         }
 
         let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
-        let phase = self.phase();
-        // Follow Windows' light/dark choice.
-        if self.v.config.appearance == "system" && self.last_sys_check.elapsed() > Duration::from_secs(3) {
-            self.last_sys_check = Instant::now();
-            let d = ffi::system_prefers_dark();
-            if d != self.sys_dark {
-                self.sys_dark = d;
-            }
+        // Tell the core what is on screen and when the window stops drawing: it samples only what is
+        // shown, and keeps working while a minimised window gets no frames.
+        let interest = self.interest();
+        if interest != self.last_interest {
+            self.last_interest = interest;
+            self.core.hint(Hint::Interest(interest));
         }
-        // The core's upkeep (sampling, live readings, saving, closing, trims) runs once per frame for now.
-        let facts =
-            FrameFacts { interest: self.interest(), minimised: minimized, close_requested: ctx.input(|i| i.viewport().close_requested()) };
-        let up = self.core.tick(&facts);
-        if up.cancel_close {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if minimized != self.last_minimised {
+            self.last_minimised = minimized;
+            self.core.hint(Hint::Minimised(minimized));
+        }
+        // Follow Windows' light/dark choice. Only this mode needs asking again, so only it asks for
+        // a frame: everything else is woken by the core when there is something new.
+        if self.v.config.appearance == "system" {
+            let now = Instant::now();
+            if now.duration_since(self.last_sys_check) > Duration::from_secs(3) {
+                self.last_sys_check = now;
+                self.sys_dark = ffi::system_prefers_dark();
+            }
+            ctx.request_repaint_after((self.last_sys_check + Duration::from_secs(3)).saturating_duration_since(now));
         }
         self.v = self.core.view();
+        // The core answers a close request: the window stays up while a boost is put back, then
+        // Event::ReadyToClose closes it.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.core.hint(Hint::CloseRequested);
+        }
         self.drain_events();
         // Dropped files become games.
         let dropped: Vec<String> =
@@ -386,10 +408,6 @@ impl eframe::App for CatalyxApp {
                 std::process::exit(0);
             }
             self.selftest = Some(t);
-        }
-        // Slow tick for the live meters: nothing while minimised, quick while a boost runs.
-        if !minimized {
-            ctx.request_repaint_after(if phase.active() || up.closing { Duration::from_millis(600) } else { Duration::from_millis(2000) });
         }
     }
 

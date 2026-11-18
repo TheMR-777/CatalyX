@@ -144,7 +144,6 @@ impl StatusCell {
 
     /// Sets the function called after each change. Only the first call counts (the watcher and
     /// the command line set none).
-    #[allow(dead_code)] // the core's upkeep thread connects to it next (Phase 1a T2b)
     pub fn set_notify(&self, f: impl Fn() + Send + Sync + 'static) {
         let _ = self.notify.set(Box::new(f));
     }

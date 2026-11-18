@@ -76,10 +76,13 @@ caches) at a scratch folder; the built-in checks and the tests always use it. A 
 - **egui/eframe 0.35 on OpenGL (glow).** A frameless window: `gui/chrome.rs` draws the title bar and sidebar,
   `widgets::window_edges` provides resizing, and `ffi::style_borderless_window` gives Windows 11's rounded
   corners and shadow.
-- **Repaint policy** (this is why the footprint is small): the window draws only when something changes, with
-  a slow tick for live meters (2 s idle, 0.6 s while boosting) and *no* repaints while minimised. Because a
-  minimised window never runs its frame logic again, `gui/mod.rs` trims the process once, 1.5 s after the
-  minimise, from a short-lived thread.
+- **Repaint policy** (this is why the footprint is small): the window draws only when something changes. The
+  core's upkeep thread (`src/app/mod.rs`, `src/app/upkeep.rs`) wakes it when the view moved (a job result, fresh
+  readings, the engine's progress) and never while it is minimised, which draws nothing. Sampled readings share
+  one draw cadence, 2 s idle and 0.6 s while boosting, the same as the old frame tick; a job result or an event
+  is shown at once. The same thread does the work that must not depend on frames: the debounced save, the
+  auto-boost scan, live and service readings on their own deadlines, the 1.5 s trim after minimising, the 30 s
+  trim, and putting a boost back before the window closes.
 - **Theme**: `theme::palette(look, accent, tint, dark)` blends a look (Focus/Slate/Mica), an accent colour and a
   tint strength. Layout uses an 8-point grid; see AGENTS.md for the design rules.
 - **The mark** (`gui/mark.rs`) is one geometry used for the title-bar tile, the window icon and the `.ico`.
