@@ -250,9 +250,9 @@ impl CatalyxApp {
                     app::Tone::Info => self.toast_info(text),
                     app::Tone::Error => self.toast_err(text),
                 },
-                Event::ConfirmBoost { game } => {
+                Event::ConfirmBoost { game, plan } => {
                     self.boost_dont_ask = false;
-                    self.confirm = Some(pages::Confirm::Boost { idx: game });
+                    self.confirm = Some(pages::Confirm::Boost { idx: game, plan });
                 }
                 Event::ReadyToClose => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Event::ReadyToQuit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),

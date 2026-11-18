@@ -10,6 +10,7 @@
 //! snapshot; neither of those threads ever takes the State, so there is no lock-order cycle. Jobs run
 //! with no lock held and only lock the State to store their result.
 
+mod boost;
 mod intent;
 mod jobs;
 mod state;
@@ -17,6 +18,7 @@ mod upkeep;
 mod view;
 pub mod window;
 
+pub use boost::{power_summary, NoticeKind, Plan};
 pub use intent::{Event, Hint, Intent, Interest, Tone};
 pub use state::{apply_app_suggestions_to, apply_service_suggestions_to, apply_suggestions, apply_suggestions_to};
 pub use view::View;

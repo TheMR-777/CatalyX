@@ -29,8 +29,8 @@ switching, no plugin loader and no `dyn` indirection: the exe carries only the s
 3. **Draw only on change.** The core wakes the skin when its `View` changes; the skin redraws then (and for its own
    input and animations). A minimised skin draws nothing. The core keeps working without it (see Upkeep).
 4. **Tell the core what is on screen** (`Hint`s), so it samples only what is shown.
-5. **User-facing text from the core is plain English and final** (plan lines, toasts, the activity log). A skin
-   may restyle it, not reword its meaning.
+5. **User-facing text from the core is plain English and final** (plan lines, notices, toasts, the activity log).
+   A skin may restyle it, not reword its meaning.
 6. **The skin owns its customisation** (next section): the core does not know what an accent, a theme or a boost
    control "style" is.
 
@@ -110,13 +110,16 @@ The waker is stored once (behind an `Arc`); it is called only when the view chan
 | `config: Arc<Config>` | the saved config, read-only (games, presets, rules, options). Helper queries: `settings_for(game)`, `apps_for`, `services_for`, `app_action(scope, exe)`, `service_stopped(scope, name)`, `profile_label(game)` | an intent edits it |
 | `prefs: Arc<Prefs>` | this skin's preferences, validated against its spec | `SetPref` |
 | `session: Arc<Session>` | phase, game name/id/pid/exe, counts (before/after memory and clock, apps closed/paused/lowered, services stopped...), the activity log (`LogLine`s, below), `pending_journal`, `quiet_desktop` | the engine reports |
-| `boost: Arc<BoostView>` | the boost's progress (stages and whether each is done, progress 0..1, title, sub line, profile label, has_game, busy), the plan ("This boost will" lines + how many options are off), and the notices to show (interrupted boost, not administrator, nothing chosen, no game) | config or session changes |
+| `boost: Arc<BoostView>` | the selected game's name and profile label, whether there is a game, the stages and whether each is done, a 0..1 progress estimate, the plan ("This boost will" lines + how many options are off), and the notices to show (interrupted boost, not administrator, nothing chosen, no game). The core supplies the facts and the plan's final text; the headline wording around a control is the skin's | config, session or service-list changes |
 | `meters: Meters` | CPU %, memory used/total, GPU %, CPU name/cores/clock/base clock, `ready` | each monitor sample |
 | `apps: Arc<Vec<AppRow>>` | running programs grouped by exe (name, category, count, CPU, memory, GPU, protected) plus rule-only rows | each detailed sample, only while `Interest::Processes` |
 | `services: Arc<Vec<ServiceRow>>` | name, display name, running, can_stop, **can_start (cached, not asked per frame)**, catalogue entry (why, impact, recommended), protected | refreshed while `Interest::Services` |
 | `hardware: Arc<Hardware>` | graphics card (name, vendor, supported, clock ranges, note), planned offsets per level, power plans and the active one, live card readings (`Interest::GpuLive`), CatalyX's own memory (`Interest::OwnUsage`) | probes finish / live ticks |
 | `system` | `admin`, elevation state `(one-click task, watcher)` (`Interest::Elevation`), version | rarely |
 | `library` | installed-games scan result, real-program candidates per game id, and the busy flags (`scanning`, `probing`...) | jobs finish |
+
+`BoostView` describes the boost, not a control: a skin may draw a dial, a launch bar, a list of stages, or
+show only the plan. `busy` and `boosted` are not separate fields; they follow from `session.phase`.
 
 Games and presets are referred to by **id** everywhere in the API, never by list index (indexes go stale when
 something is removed).

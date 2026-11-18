@@ -28,9 +28,11 @@ pub struct PageState {
 
 pub enum Confirm {
     Welcome,
-    /// The summary shown before a boost starts: the game to start, or none for gaming mode alone.
+    /// The summary shown before a boost starts: the game to start, or none for gaming mode alone,
+    /// and the core's plan for exactly that game.
     Boost {
         idx: Option<usize>,
+        plan: crate::app::Plan,
     },
     RemoveGame(usize),
     ResetConfig,
@@ -111,10 +113,9 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                 return;
             }
         }
-        Confirm::Boost { idx } => {
+        Confirm::Boost { idx, plan } => {
             let game = idx.and_then(|i| app.v.config.games.get(i)).cloned();
             let p = app.pal();
-            let (lines, off) = boost::plan_lines(app, game.as_ref());
             let title = match &game {
                 Some(g) => format!("Boost & play {}?", g.name),
                 None => "Start gaming mode?".to_string(),
@@ -125,7 +126,7 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
             Dialog::new(title).width(460.0).show(ctx, &mut open, |ui| {
                 ui.label(faint(ui, "This is what will change on this PC. Everything is put back when the game closes, or when you press Restore.", 12.0));
                 ui.add_space(10.0);
-                for text in &lines {
+                for text in &plan.lines {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 22.0), egui::Sense::hover());
@@ -133,9 +134,9 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                         ui.label(egui::RichText::new(text).size(14.0));
                     });
                 }
-                if off > 0 {
+                if plan.off > 0 {
                     ui.add_space(4.0);
-                    ui.label(faint(ui, format!("{off} more option(s) are off"), 12.0));
+                    ui.label(faint(ui, format!("{} more option(s) are off", plan.off), 12.0));
                 }
                 ui.add_space(14.0);
                 ui.add(egui_components::Checkbox::new(&mut dont, "Don't ask me again"));

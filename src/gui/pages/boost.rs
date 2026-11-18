@@ -2,8 +2,7 @@
 //! attention are shown, and the right-hand card is the plan while idle, the live session while
 //! boosting.
 
-use crate::app::Intent;
-use crate::config::{CpuLevel, GpuLevel, PowerChoice, ProcAction};
+use crate::app::{power_summary, Intent, NoticeKind};
 use crate::engine::{Phase, Status};
 use crate::gui::control;
 use crate::gui::icons::{self, Ico};
@@ -30,7 +29,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
                     ui.set_width(left_w);
                     ui.spacing_mut().item_spacing.y = GAP;
                     hero(app, ui, &status);
-                    notices(app, ui, &status);
+                    notices(app, ui);
                 });
                 ui.vertical(|ui| {
                     ui.set_width(SIDE_W);
@@ -43,7 +42,7 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
             });
         } else {
             hero(app, ui, &status);
-            notices(app, ui, &status);
+            notices(app, ui);
             if session {
                 session_card(app, ui, &status);
             } else {
@@ -175,14 +174,15 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
         app.control_act(a);
     }
 }
-/// Only what needs attention. Nothing at all when everything is in order.
-fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
+/// Only what needs attention. Nothing at all when everything is in order. The core decides what is
+/// worth saying; this skin chooses the tone, the action label and what the action does.
+fn notices(app: &mut CatalyxApp, ui: &mut Ui) {
+    // A cheap Arc clone, not a copy of the notices: the core made them when its inputs changed.
+    let boost = app.v.boost.clone();
+    if boost.notices.is_empty() {
+        return;
+    }
     let sel = app.v.config.selected_index();
-    let game = sel.and_then(|i| app.v.config.games.get(i)).cloned();
-    let rules = app.v.config.apps_for(game.as_ref());
-    let none_apps = rules.values().all(|a| *a == ProcAction::Keep);
-    let none_svcs = !app.v.config.services_for(game.as_ref()).values().any(|v| *v);
-    let idle = status.phase == Phase::Idle;
     #[derive(Clone, Copy)]
     enum Do {
         Restore,
@@ -190,29 +190,19 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
         Suggest,
         AddGame,
     }
-    let mut rows: Vec<(Tone, &str, &str, Do)> = Vec::new();
-    if status.pending_journal && idle {
-        rows.push((Tone::Warn, "A previous boost was interrupted: some changes may still be in place", "Restore now", Do::Restore));
-    }
-    if !app.v.system.admin {
-        rows.push((Tone::Warn, "Not running as administrator: services and elevated games are off-limits", "Restart as admin", Do::Admin));
-    }
-    if none_apps && none_svcs && idle {
-        rows.push((Tone::Accent, "No apps or services chosen yet", "Use suggestions", Do::Suggest));
-    }
-    if app.v.config.games.is_empty() {
-        rows.push((Tone::Accent, "No game added yet", "Add a game", Do::AddGame));
-    }
-    if rows.is_empty() {
-        return;
-    }
     let mut act: Option<Do> = None;
     card(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        let n = rows.len();
-        for (i, (tone, text, action, what)) in rows.iter().enumerate() {
-            if notice_row(ui, *tone, text, Some(action)) {
-                act = Some(*what);
+        let n = boost.notices.len();
+        for (i, notice) in boost.notices.iter().enumerate() {
+            let (tone, action, what) = match notice.kind {
+                NoticeKind::Interrupted => (Tone::Warn, "Restore now", Do::Restore),
+                NoticeKind::NotAdmin => (Tone::Warn, "Restart as admin", Do::Admin),
+                NoticeKind::NothingChosen => (Tone::Accent, "Use suggestions", Do::Suggest),
+                NoticeKind::NoGame => (Tone::Accent, "Add a game", Do::AddGame),
+            };
+            if notice_row(ui, tone, notice.text, Some(action)) {
+                act = Some(what);
             }
             if i + 1 < n {
                 hairline(ui);
@@ -232,53 +222,12 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
     }
 }
 
-fn power_summary(s: &crate::config::Settings) -> String {
-    let plan = match s.power {
-        PowerChoice::Keep => "your power plan",
-        PowerChoice::HighPerformance => "High performance plan",
-        PowerChoice::BoostPlan => "CatalyX power plan",
-    };
-    match s.cpu {
-        CpuLevel::Off => plan.to_string(),
-        c => format!("{plan}, CPU {}", c.label().split(' ').next().unwrap_or("").to_lowercase()),
-    }
-}
-
-/// What a boost with these settings will do: the lines for what is switched on, and how many options are off.
-/// Used by the plan card and by the confirmation before a boost starts.
-pub(super) fn plan_lines(app: &CatalyxApp, game: Option<&crate::config::Game>) -> (Vec<String>, usize) {
-    let s = app.v.config.settings_for(game);
-    let rules = app.v.config.apps_for(game);
-    let count = |a: ProcAction| rules.values().filter(|x| **x == a).count();
-    let n_svc = app.v.config.services_for(game).iter().filter(|(name, on)| app.v.service_stops(name, **on)).count();
-    let mut on: Vec<String> = Vec::new();
-    let mut off = 0;
-    let mut add = |enabled: bool, text: String| {
-        if enabled {
-            on.push(text)
-        } else {
-            off += 1
-        }
-    };
-    add(s.power != PowerChoice::Keep || s.cpu != CpuLevel::Off, power_summary(&s));
-    add(true, format!("{} game priority{}", s.priority.label(), if s.io_boost { " + disk" } else { "" }));
-    let (lo, pa, cl) = (count(ProcAction::Lower), count(ProcAction::Suspend), count(ProcAction::Close));
-    add(s.apps && lo + pa + cl > 0, format!("Apps: {lo} lowered, {pa} paused, {cl} closed"));
-    add(s.services && n_svc > 0, format!("{n_svc} services paused{}", if app.v.system.admin { "" } else { " (needs admin)" }));
-    add(s.lower_others, "Everything else at lowest priority".into());
-    add(s.clean_ram, format!("Free memory first{}", if s.purge_standby { " + cached memory" } else { "" }));
-    add(s.windows_game_mode, "Windows Game Mode on".into());
-    add(s.notifications_off || s.game_dvr_off, "Quiet notifications and recording".into());
-    add(s.gpu != GpuLevel::Off, format!("Graphics card: {}", s.gpu.label().to_lowercase()));
-    add(s.quiet_desktop && game.is_some(), "Taskbar off while you play (Ctrl+Alt+End brings it back)".into());
-    (on, off)
-}
-
 /// What this boost will do: only the things that are switched on.
 fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
     let p = app.pal();
     let game = app.v.config.selected().cloned();
-    let (on, off) = plan_lines(app, game.as_ref());
+    // A cheap Arc clone: the plan itself was made when its inputs last changed, not now.
+    let boost = app.v.boost.clone();
     let mut edit = false;
     card_titled(
         ui,
@@ -290,7 +239,7 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
         },
         |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            for text in &on {
+            for text in &boost.plan.lines {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 22.0), egui::Sense::hover());
@@ -298,9 +247,9 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
                     ui.add(egui::Label::new(RichText::new(text).size(14.0)).truncate());
                 });
             }
-            if off > 0 {
+            if boost.plan.off > 0 {
                 ui.add_space(6.0);
-                ui.label(faint(ui, format!("{off} more option(s) are off"), 12.0));
+                ui.label(faint(ui, format!("{} more option(s) are off", boost.plan.off), 12.0));
             }
         },
     );

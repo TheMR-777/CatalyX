@@ -150,6 +150,7 @@ impl State {
             }
             Done::Services(l) => {
                 self.services = Arc::new(l);
+                self.services_rev += 1;
                 self.svc_busy = false;
             }
             Done::Installed(list) => {

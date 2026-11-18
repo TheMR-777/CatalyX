@@ -1,6 +1,7 @@
 //! What a skin can ask of the core (`Intent`), what the core asks the skin to show (`Event`), and what
 //! the skin tells the core about itself (`Hint`). See docs/SKINS.md for the contract.
 
+use super::boost::Plan;
 use crate::config::{Config, CpuLevel};
 
 /// Every change a person can ask for. Games are still referred to by list index here; ids come with T5.
@@ -81,10 +82,11 @@ pub enum Tone {
 /// Things the core needs the skin to show.
 #[derive(Debug)]
 pub enum Event {
-    /// The person asked to boost and wants a summary first: show it, then send `ConfirmBoost` or
-    /// `CancelBoost`.
+    /// The person asked to boost and wants a summary first: show this plan, then send `ConfirmBoost`
+    /// or `CancelBoost`. The plan is a snapshot for exactly that game, made when it was asked for.
     ConfirmBoost {
         game: Option<usize>,
+        plan: Plan,
     },
     Toast {
         tone: Tone,

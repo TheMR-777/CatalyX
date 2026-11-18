@@ -87,13 +87,15 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
 4. `src/selftest.rs`: it builds a `Settings` literal; add the field.
 5. `src/cli/profiles.rs`: a key in `describe()` and `apply_setting()`; add it to the `KEYS` text in
    `src/cli/help.rs`.
-6. `src/gui/pages/profiles.rs`: a `toggle(...)`; `src/gui/pages/boost.rs`: a line in "This boost will".
+6. `src/gui/pages/profiles.rs`: a `toggle(...)`; `src/app/boost.rs`: a line in `plan()` (and its test).
 7. `src/engine/`: apply it (rule 1) and undo it.
 8. Docs: `docs/HOW-IT-WORKS.md` (and `docs/CLI.md` if the help text changed).
 
 ## The boost control
 
 A boost is started from exactly one place, `gui/control.rs`, in one of three looks (bar, gauge, ring) that share a Ctl state and the Act actions. Do not start a boost from anywhere else in the window: go through `request_boost` (it shows the summary dialog unless the person turned it off) and `restore` (never confirms). A new look is a new function that takes &Ctl and returns Option<Act>; add its key to `Style`, the Settings row and the CLI `theme` tokens. Boosted colours come from the palette accent, never a fixed hue.
+
+The plan lines, stages, progress estimate and notices come from `src/app/boost.rs` through `View::boost`; the skin draws them and owns only its own wording and looks. Do not re-derive them in a page.
 
 ## Design rules for the window
 

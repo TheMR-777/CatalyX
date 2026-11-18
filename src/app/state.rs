@@ -1,6 +1,7 @@
 //! State: everything the window used to own that is not drawing (the config and its saving, the engine
 //! link, probes and their results, the boost policy), and `apply`, which carries out an intent.
 
+use super::boost::{self, BoostView};
 use super::intent::{Event, Hint, Intent, Interest, Tone};
 use super::jobs::{Done, Job};
 use super::view::{Hardware, Library, System, View};
@@ -16,6 +17,15 @@ use std::time::{Duration, Instant};
 
 /// Events kept while nobody takes them (a minimised window draws nothing); the oldest go first.
 const MAX_EVENTS: usize = 32;
+
+/// Everything the boost view is made from. Equal inputs mean the cached view is still current.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BoostInputs {
+    cfg: u64,
+    status: u64,
+    services: u64,
+    admin: bool,
+}
 
 pub struct State {
     pub(super) cfg: Arc<Config>,
@@ -68,6 +78,12 @@ pub struct State {
     status_view: Arc<Status>,
     snap_seen: Option<u64>,
     snap_view: Arc<Snapshot>,
+    /// Bumped by every config edit and service-list replacement, so the boost view can tell when its
+    /// inputs moved without walking the config on every frame.
+    cfg_rev: u64,
+    pub(super) services_rev: u64,
+    boost_seen: Option<BoostInputs>,
+    boost_view: Arc<BoostView>,
     /// Jobs to start and whether to wake the skin, once the lock is released (see `Core::send`).
     pub(super) jobs: Vec<Job>,
     pub(super) wake: bool,
@@ -120,6 +136,10 @@ impl State {
             status_view: Arc::new(Status::default()),
             snap_seen: None,
             snap_view: Arc::new(Snapshot::default()),
+            cfg_rev: 0,
+            services_rev: 0,
+            boost_seen: None,
+            boost_view: Arc::new(BoostView::default()),
             jobs: Vec::new(),
             wake: false,
         }
@@ -131,6 +151,7 @@ impl State {
     /// it once (Arc::make_mut); later changes in the same frame do not.
     pub(super) fn cfg_mut(&mut self) -> &mut Config {
         self.rev += 1;
+        self.cfg_rev += 1;
         Arc::make_mut(&mut self.cfg)
     }
 
@@ -271,6 +292,14 @@ impl State {
     /// The current View, rebuilding only the sections whose source moved.
     pub(super) fn view(&mut self) -> View {
         self.sync();
+        let inputs =
+            BoostInputs { cfg: self.cfg_rev, status: self.status_seen.unwrap_or(0), services: self.services_rev, admin: self.system.admin };
+        if self.boost_seen != Some(inputs) {
+            // The plan lines, stages and notices are derived from data that does not change per
+            // frame; doing it here keeps a skin's draw loop free of config walks and Windows calls.
+            self.boost_view = Arc::new(boost::build(&self.cfg, &self.status_view, &self.services, self.system.admin));
+            self.boost_seen = Some(inputs);
+        }
         // This call is the skin drawing the current revision: it is not shown again for a sample.
         self.drawn_rev = self.rev;
         View {
@@ -282,6 +311,7 @@ impl State {
             services: self.services.clone(),
             library: self.library.clone(),
             system: self.system,
+            boost: self.boost_view.clone(),
         }
     }
 
@@ -341,10 +371,13 @@ impl State {
         }
     }
 
-    /// Asks the skin to show the summary for this boost and waits for its answer.
+    /// Asks the skin to show the summary for this boost and waits for its answer. The plan is made
+    /// for exactly this game now, so a skin never has to work out which game the summary belongs to.
     pub(super) fn show_boost_summary(&mut self, game: Option<usize>) {
+        let target = game.and_then(|i| self.cfg.games.get(i));
+        let plan = boost::plan(&self.cfg, target, &self.services, self.system.admin);
         self.awaiting_confirm = Some(game);
-        self.event(Event::ConfirmBoost { game });
+        self.event(Event::ConfirmBoost { game, plan });
     }
 
     pub(super) fn request_for(&self, game: Option<&Game>, attach: Option<u32>) -> BoostRequest {
@@ -621,7 +654,7 @@ mod tests {
         let (mut st, rx) = state();
         st.apply(Intent::Boost { game: None });
         assert!(rx.try_recv().is_err(), "nothing may start before the summary is confirmed");
-        assert!(matches!(st.take_events().as_slice(), [Event::ConfirmBoost { game: None }]));
+        assert!(matches!(st.take_events().as_slice(), [Event::ConfirmBoost { game: None, .. }]));
         st.apply(Intent::ConfirmBoost { game: None, dont_ask_again: false });
         assert!(matches!(rx.try_recv(), Ok(Cmd::Boost(_))));
         assert!(st.cfg.confirm_boost, "asking stays on unless the box was ticked");
@@ -643,6 +676,34 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Cmd::Boost(_))));
         let events = st.take_events();
         assert!(events.iter().all(|e| !matches!(e, Event::ConfirmBoost { .. })));
+    }
+
+    #[test]
+    fn the_summary_plan_is_for_the_game_that_asked_for_it() {
+        let (mut st, _rx) = state();
+        let cfg = st.cfg_mut();
+        cfg.games.push(Game { name: "One".into(), ..Default::default() });
+        cfg.games.push(Game {
+            name: "Two".into(),
+            custom: Some(crate::config::Settings {
+                power: crate::config::PowerChoice::Keep,
+                cpu: crate::config::CpuLevel::Off,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        // The selected game is still the first; the summary is asked for the second.
+        st.apply(Intent::Boost { game: Some(1) });
+        let events = st.take_events();
+        match events.as_slice() {
+            [Event::ConfirmBoost { game: Some(1), plan }] => {
+                assert!(
+                    plan.lines.iter().all(|l| !l.contains("power plan")),
+                    "the plan belongs to the game being confirmed, not the selected one"
+                );
+            }
+            other => panic!("expected a summary for game 1, got {other:?}"),
+        }
     }
 
     #[test]
@@ -786,5 +847,37 @@ mod tests {
         st.rev = 7;
         let _ = st.view();
         assert_eq!(st.drawn_rev, st.rev, "a drawn revision is not drawn again for a sample");
+    }
+
+    #[test]
+    fn the_boost_view_is_rebuilt_only_when_its_inputs_change() {
+        let (mut st, _rx) = state();
+        let first = st.view().boost.clone();
+        assert!(Arc::ptr_eq(&first, &st.view().boost), "a second frame reuses the boost view");
+
+        // A monitor sample is not a boost input: it must not rebuild the plan.
+        if let Ok(mut s) = st.snap.lock() {
+            s.serial += 1;
+        }
+        assert!(Arc::ptr_eq(&first, &st.view().boost), "a sample does not rebuild the plan");
+
+        // Any config edit rebuilds it: deciding which fields a plan reads would be fragile, and the
+        // rebuild is cheap compared with the frame that follows an edit.
+        st.apply(Intent::Edit(Box::new(|c| c.boost_control = "gauge".into())));
+        let after_edit = st.view().boost.clone();
+        assert!(!Arc::ptr_eq(&first, &after_edit));
+
+        // A new service list is: its cached can_start facts decide which services are promised.
+        st.finish(Done::Services(Vec::new()));
+        let after_services = st.view().boost.clone();
+        assert!(!Arc::ptr_eq(&after_edit, &after_services));
+
+        // The engine's status is: stages finish while a boost is applied.
+        if let Ok(mut s) = st.status.lock() {
+            s.phase = Phase::Boosted;
+        }
+        let after_status = st.view().boost.clone();
+        assert!(!Arc::ptr_eq(&after_services, &after_status));
+        assert_eq!(after_status.progress, 1.0);
     }
 }

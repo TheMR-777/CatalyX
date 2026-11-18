@@ -251,6 +251,16 @@ impl Config {
         (!self.games.is_empty()).then(|| self.selected_game.min(self.games.len() - 1))
     }
 
+    /// The profile a game follows, worded for people: "Own settings", the preset's name, or the
+    /// default preset's name when no game is selected. Shared by the core's boost view and any skin.
+    pub fn profile_label(&self, game: Option<&Game>) -> String {
+        match game {
+            Some(g) if g.custom.is_some() => "Own settings".to_string(),
+            Some(g) => self.preset(&g.preset).name.clone(),
+            None => self.preset(&self.default_preset).name.clone(),
+        }
+    }
+
     /// Writes one app choice at one scope. Keep is "no rule" for the global list and "follow the
     /// global list" for a game, so a game's map only ever holds real differences.
     pub fn set_app_rule(&mut self, game: Option<usize>, exe: &str, a: ProcAction) {

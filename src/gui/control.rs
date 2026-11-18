@@ -11,7 +11,6 @@ use super::theme::{alpha, mix, pal};
 use super::widgets::*;
 use super::CatalyxApp;
 use crate::app::Intent;
-use crate::config::{CpuLevel, GpuLevel, PowerChoice, ProcAction};
 use crate::engine::{Phase, Status};
 use egui::{pos2, vec2, Align, Align2, FontId, Id, Layout, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use std::f32::consts::{PI, TAU};
@@ -83,65 +82,16 @@ pub struct Ctl {
     pub sub: String,
 }
 
-/// How far along a boost is. Pure, so it can be tested: applying fills 8-80% as stages finish, waiting
-/// for the game is 85%, a running boost is 100%, and restoring falls back to 40%.
-pub fn progress_for(phase: Phase, done: usize, total: usize) -> f32 {
-    match phase {
-        Phase::Idle => 0.0,
-        Phase::Boosting => 0.08 + 0.72 * done as f32 / total.max(1) as f32,
-        Phase::Finding => 0.85,
-        Phase::Running | Phase::Boosted => 1.0,
-        Phase::Restoring => 0.4,
-    }
-}
-
+/// The classic skin's view model: the core's neutral boost facts plus the wording this skin uses
+/// around its dial. A different skin may build its own model or draw `View::boost` directly.
 pub fn state(app: &CatalyxApp, st: &Status) -> Ctl {
-    let cfg = &*app.v.config;
-    let games = cfg.games.len();
-    let sel = cfg.selected_game.min(games.saturating_sub(1));
-    let game = cfg.games.get(sel);
-    let s = cfg.settings_for(game);
-    let rules = cfg.apps_for(game);
-    let n_rules = rules.values().filter(|a| **a != ProcAction::Keep).count();
-    let n_svc = cfg.services_for(game).values().filter(|v| **v).count();
-    let k = &st.counts;
+    let b = &app.v.boost;
     let phase = st.phase;
-    let applied = matches!(phase, Phase::Finding | Phase::Running | Phase::Boosted | Phase::Restoring);
-    let finished = matches!(phase, Phase::Running | Phase::Boosted);
-
-    let mut stages: Vec<(&'static str, bool)> = Vec::new();
-    if s.power != PowerChoice::Keep || s.cpu != CpuLevel::Off {
-        stages.push(("Power plan", applied || !k.power_plan.is_empty()));
-    }
-    if s.windows_game_mode || s.game_dvr_off || s.notifications_off || s.transparency_off || s.pause_maintenance || s.mmcss_games {
-        stages.push(("Windows", applied || k.tweaks > 0));
-    }
-    if (s.apps && n_rules > 0) || (s.services && n_svc > 0) || s.lower_others {
-        stages.push(("Apps and services", applied || k.apps_closed + k.apps_paused + k.apps_lowered + k.services_stopped > 0));
-    }
-    if s.clean_ram || s.purge_standby {
-        stages.push(("Memory", applied || k.ram_freed > 0 || k.standby_purged));
-    }
-    if s.gpu != GpuLevel::Off {
-        stages.push(("Graphics card", applied || k.gpu_core_mhz > 0));
-    }
-    if game.is_some() {
-        stages.push(("Game", finished || st.game_pid != 0));
-    }
-    let done = stages.iter().filter(|s| s.1).count();
-    let progress = progress_for(phase, done, stages.len());
-
-    let name = game.map(|g| g.name.clone()).unwrap_or_else(|| "Gaming mode".into());
-    let profile = match game {
-        Some(g) if g.custom.is_some() => "Own settings".to_string(),
-        Some(g) => cfg.preset(&g.preset).name.clone(),
-        None => cfg.preset(&cfg.default_preset).name.clone(),
-    };
-    let pending = stages.iter().find(|s| !s.1).map(|s| s.0);
+    let pending = b.stages.iter().find(|s| !s.done).map(|s| s.label);
     let (title, sub) = match phase {
-        Phase::Idle => (if game.is_some() { "Boost & play" } else { "Boost" }.to_string(), profile.clone()),
+        Phase::Idle => (if b.has_game { "Boost & play" } else { "Boost" }.to_string(), b.profile.clone()),
         Phase::Boosting => (pending.map(|n| format!("{n}...")).unwrap_or_else(|| "Applying...".into()), "boosting".to_string()),
-        Phase::Finding => (format!("Starting {name}..."), "looking for the game".to_string()),
+        Phase::Finding => (format!("Starting {}...", b.name), "looking for the game".to_string()),
         Phase::Running | Phase::Boosted => ("Boosted".to_string(), "click to restore".to_string()),
         Phase::Restoring => ("Restoring...".to_string(), "putting everything back".to_string()),
     };
@@ -149,11 +99,11 @@ pub fn state(app: &CatalyxApp, st: &Status) -> Ctl {
         phase,
         busy: matches!(phase, Phase::Boosting | Phase::Restoring),
         boosted: phase != Phase::Idle,
-        has_game: game.is_some(),
-        name,
-        profile,
-        stages,
-        progress,
+        has_game: b.has_game,
+        name: b.name.clone(),
+        profile: b.profile.clone(),
+        stages: b.stages.iter().map(|s| (s.label, s.done)).collect(),
+        progress: b.progress,
         title,
         sub,
     }
@@ -453,24 +403,6 @@ mod tests {
         }
         assert_eq!(Style::from_key("nonsense"), Style::Bar, "an unknown name falls back to the launch bar");
         assert_eq!(Style::from_key("GAUGE"), Style::Gauge);
-    }
-
-    #[test]
-    fn progress_rises_while_applying_and_ends_full() {
-        assert_eq!(progress_for(Phase::Idle, 0, 5), 0.0);
-        let mut last = 0.0;
-        for done in 0..=5 {
-            let p = progress_for(Phase::Boosting, done, 5);
-            assert!(p > last || done == 0, "progress must not go backwards");
-            assert!(p <= 0.8 + 1e-6, "applying never looks finished");
-            last = p;
-        }
-        assert!(progress_for(Phase::Finding, 5, 5) > progress_for(Phase::Boosting, 5, 5));
-        assert_eq!(progress_for(Phase::Running, 5, 5), 1.0);
-        assert_eq!(progress_for(Phase::Boosted, 0, 0), 1.0);
-        assert!(progress_for(Phase::Restoring, 5, 5) < 1.0);
-        // A profile with no stages at all must not divide by zero.
-        assert!(progress_for(Phase::Boosting, 0, 0).is_finite());
     }
 
     #[test]
