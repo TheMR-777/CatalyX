@@ -105,6 +105,19 @@ build for scripts, pipes and agents. CI checks `catalyx.exe`'s PE subsystem is 2
 now shown fully drawn at ~250-285 ms (the OpenGL context creation, ~175-215 ms, is the floor). Hardware probes start
 after it is shown so they never compete with the first frames. `CATALYX_TRACE=1` records the timeline.
 
+## Compatibility
+
+**No backwards compatibility before 1.0** (decided 2026-11-19). There is no release to migrate from, so the
+pre-alpha builds do not promise to read each other's data. A config file whose `version` is not the current one is
+set aside and a fresh default is used, instead of being upgraded through a chain of migrations; the PureBoost-era
+folder, scheduled-task names, env var and process names go with it; the CLI keeps no historical aliases and its
+help text is written plainly from the catalogue rather than laid out to match an older build. This is carried out
+in one pass at the end of the redesign (the optimisations step), not piecemeal.
+
+The one exception is the **recovery journal**: a newer build must either undo an older journal or refuse it out
+loud. A crash must never leave Windows boosted, or the taskbar gone, because the version that wrote the journal is
+gone. That is not compatibility with users' data, it is the promise that restore never silently does nothing.
+
 ## Process
 
 **Public repo, `MIT OR Apache-2.0`.** History starts clean; nothing derived from other products is tracked, and
