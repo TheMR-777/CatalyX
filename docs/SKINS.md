@@ -142,7 +142,7 @@ New tags can be added without breaking skins (unknown bits are ignored). A skin 
 
 | Group | Intents |
 |---|---|
-| Boost | `Boost { game: Option<GameId> }` (None = gaming mode without a game), `ConfirmBoost { dont_ask_again: bool }`, `CancelBoost`, `Restore`, `ExitQuietDesktop` |
+| Boost | `Boost { game: Option<GameId> }` (None = gaming mode without a game), `ConfirmBoost { game: Option<GameId>, dont_ask_again: bool }` (the core accepts it only for the game whose summary was shown), `CancelBoost`, `Restore`, `ExitQuietDesktop` |
 | Games | `SelectGame(id)`, `AddGame { path, name, args }`, `AddInstalled(Vec<Installed>)`, `RemoveGame(id)`, `EditGame { id, name, launch, args }`, `SetRealProgram { id, exe: Option<String> }`, `SetGameProfile { id, preset }`, `GiveGameOwnSettings(id)`, `FollowPreset(id)`, `ScanLibrary`, `FindCandidates(id)` |
 | Profiles | `NewPreset { from: Target }`, `RenamePreset { id, name }`, `DeletePreset(id)`, `ResetPreset(id)`, `SetDefaultPreset(id)`, `SetSetting { target: Target, key, value }` (keys from the catalogue below) |
 | Apps | `SetAppRule { scope: Option<GameId>, exe, action }`, `UseSuggestedApps`, `ClearAppRules`, `EndAppNow { exe }` |
@@ -150,7 +150,7 @@ New tags can be added without breaking skins (unknown bits are ignored). A skin 
 | Tuning | `RefreshHardware`, `UsePowerPlan(guid)`, `BuildCatalyxPlan`, `SetHeatLimit(u32)`, `TestGraphicsCard` |
 | Options | `SetOption { key, value }` (restore when the game closes, keep apps off, reopen closed apps, ask before boosting, auto-boost, open as administrator) |
 | System | `FinishWelcome { use_suggestions }`, `SetupOneClickStart`, `RemoveOneClickStart`, `SetWatcher(bool)`, `RelaunchAsAdmin`, `ExportConfig(path)`, `ImportConfig(path)`, `ResetConfig` |
-| Skin | `SetPref { key, value }` |
+| Skin | `SetPref { key, value }` (until Phase 1b moves the classic skin's five look fields under `skins.classic`, the core stores exactly those keys and refuses anything else) |
 
 Confirmation dialogs for ordinary destructive actions (remove a game, reset settings, end an app, clear rules, the
 graphics test) are the skin's UX: it asks, then sends the intent. The one confirmation that is *policy* (the summary

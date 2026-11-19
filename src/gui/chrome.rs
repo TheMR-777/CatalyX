@@ -71,7 +71,7 @@ impl CatalyxApp {
                             let (i, tip) = if self.dark_mode() { (Ico::Sun, "Switch to light") } else { (Ico::Moon, "Switch to dark") };
                             if widgets::icon_button(ui, i, tip).clicked() {
                                 let next = if self.dark_mode() { "light" } else { "dark" };
-                                self.edit(move |cfg| cfg.appearance = next.into());
+                                self.send(Intent::SetPref { key: "appearance".into(), value: next.into() });
                             }
                         });
                     });

@@ -1,8 +1,8 @@
 //! The window. Built on egui (eframe, OpenGL) and the egui-components library.
 //!
 //! The window is a skin over the core (`crate::app`): it draws from `self.v` (the core's View, taken at
-//! the start of each frame and after each change), changes things only through `send` (and, for now,
-//! `edit`), and shows the core's events (toasts, the boost summary, closing).
+//! the start of each frame and after each change), changes things only through `send`, and shows the
+//! core's events (toasts, the boost summary, closing).
 //!
 //! Footprint rules: the window draws only when something changed. The core wakes it for background
 //! results and fresh readings, and never while it is minimised; per-process scans only run while the
@@ -195,7 +195,9 @@ impl CatalyxApp {
             app.confirm = Some(pages::Confirm::Welcome);
         }
         if dialog_boost {
-            app.core.show_boost_summary(Some(0));
+            // A real game, by id: the summary has to describe something.
+            let first = app.v.config.games.first().map(|g| g.id.clone());
+            app.core.show_boost_summary(first);
             app.drain_events();
         }
         app
@@ -238,11 +240,6 @@ impl CatalyxApp {
         self.drain_events();
     }
 
-    /// TRANSITIONAL (Phase 1a T2a, replaced by named intents in T5): a page changes the config.
-    pub fn edit(&mut self, f: impl FnOnce(&mut Config) + Send + 'static) {
-        self.send(Intent::Edit(Box::new(f)));
-    }
-
     /// Shows what the core asked for.
     fn drain_events(&mut self) {
         for e in self.core.take_events() {
@@ -254,7 +251,7 @@ impl CatalyxApp {
                 },
                 Event::ConfirmBoost { game, plan } => {
                     self.boost_dont_ask = false;
-                    self.confirm = Some(pages::Confirm::Boost { idx: game, plan });
+                    self.confirm = Some(pages::Confirm::Boost { game, plan });
                 }
                 Event::ReadyToClose => {
                     self.may_close = true;
@@ -418,7 +415,7 @@ impl eframe::App for CatalyxApp {
         let dropped: Vec<String> =
             ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.as_ref().map(|p| p.to_string_lossy().to_string())).collect());
         for path in dropped {
-            self.send(Intent::AddGame { path, name: None, real_exe: None });
+            self.send(Intent::AddGame { path, name: None, args: String::new(), real_exe: None });
         }
         self.run_checks(ctx);
         if let Some(mut t) = self.selftest.take() {

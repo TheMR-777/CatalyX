@@ -215,8 +215,8 @@ impl SelfTest {
         };
         // The boost goes through the core like any other, without the summary (this run's config is never
         // saved); the engine knows the stand-in by its id "selftest".
-        app.edit(|cfg| cfg.confirm_boost = false);
-        let idx = app.core.add_selftest_game(crate::config::Game {
+        app.send(Intent::SetOption { key: "confirm-boost".into(), value: "off".into() });
+        app.core.add_selftest_game(crate::config::Game {
             id: "selftest".into(),
             name: "Self-test game".into(),
             launch: bat.to_string_lossy().to_string(),
@@ -226,7 +226,7 @@ impl SelfTest {
         });
         self.bat = Some(bat);
         self.launched_at = procs::now_secs();
-        app.send(Intent::Boost { game: Some(idx) });
+        app.send(Intent::Boost { game: Some("selftest".into()) });
         app.tab = Tab::Boost;
     }
 

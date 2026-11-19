@@ -101,9 +101,10 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                             }
                         } else {
                             let names: Vec<String> = app.v.config.games.iter().map(|g| g.name.clone()).collect();
+                            let ids: Vec<crate::app::GameId> = app.v.config.games.iter().map(|g| g.id.clone()).collect();
                             let mut i = sel;
                             if dropdown(ui, "boost-game", half, &mut i, &names) {
-                                app.edit(move |cfg| cfg.selected_game = i);
+                                app.send(Intent::SelectGame { id: ids[i].clone() });
                             }
                         }
                     });
@@ -123,17 +124,14 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                         };
                         if dropdown(ui, "boost-profile", half, &mut i, &names) {
                             if i < app.v.config.presets.len() {
-                                app.edit(move |cfg| {
-                                    let id = cfg.presets[i].id.clone();
-                                    if let Some(g) = cfg.games.get_mut(sel) {
-                                        g.preset = id;
-                                        g.custom = None;
-                                    } else {
-                                        cfg.default_preset = id;
-                                    }
-                                });
-                            } else {
-                                app.ui.prof.target = EditTarget::Game(sel);
+                                let preset = app.v.config.presets[i].id.clone();
+                                match game.as_ref() {
+                                    Some(g) => app.send(Intent::SetGameProfile { id: g.id.clone(), preset }),
+                                    // No game: the choice is the default for new games and Boost only.
+                                    None => app.send(Intent::SetDefaultPreset { id: preset }),
+                                }
+                            } else if let Some(g) = game.as_ref() {
+                                app.ui.prof.target = EditTarget::Game(g.id.clone());
                                 app.tab = Tab::Profiles;
                             }
                         }
@@ -182,7 +180,7 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui) {
     if boost.notices.is_empty() {
         return;
     }
-    let sel = app.v.config.selected_index();
+    let sel = app.v.config.selected().map(|g| g.id.clone());
     #[derive(Clone, Copy)]
     enum Do {
         Restore,
@@ -214,7 +212,7 @@ fn notices(app: &mut CatalyxApp, ui: &mut Ui) {
         Some(Do::Admin) => super::settings::relaunch_admin(app),
         Some(Do::Suggest) => {
             // The notice describes the selected game's plan, so the suggestions fill that scope.
-            app.edit(move |cfg| crate::app::apply_suggestions_to(cfg, sel));
+            app.send(Intent::UseSuggestions { scope: sel });
             app.toast_ok("Suggestions selected: review them in Apps and Services");
         }
         Some(Do::AddGame) => app.tab = Tab::Games,
@@ -254,16 +252,10 @@ fn plan_card(app: &mut CatalyxApp, ui: &mut Ui) {
         },
     );
     if edit {
-        app.ui.prof.target = match (app.v.config.selected_index(), game.as_ref()) {
-            (Some(i), Some(g)) if g.custom.is_some() => EditTarget::Game(i),
-            _ => EditTarget::Preset(
-                app.v
-                    .config
-                    .presets
-                    .iter()
-                    .position(|pr| pr.id == game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.v.config.default_preset.clone()))
-                    .unwrap_or(0),
-            ),
+        let preset = game.as_ref().map(|g| g.preset.clone()).unwrap_or_else(|| app.v.config.default_preset.clone());
+        app.ui.prof.target = match game.as_ref() {
+            Some(g) if g.custom.is_some() => EditTarget::Game(g.id.clone()),
+            _ => EditTarget::Preset(preset),
         };
         app.tab = Tab::Profiles;
     }

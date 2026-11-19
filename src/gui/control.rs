@@ -127,19 +127,18 @@ impl CatalyxApp {
 
     /// Carries out what the control asked for.
     pub(super) fn control_act(&mut self, a: Act) {
-        let games = self.v.config.games.len();
-        let sel = self.v.config.selected_game.min(games.saturating_sub(1));
+        let sel = self.v.config.selected().map(|g| g.id.clone());
         match a {
             Act::Restore => self.send(Intent::Restore),
-            Act::Boost => self.request_boost(if games > 0 { Some(sel) } else { None }),
+            Act::Boost => self.request_boost(sel),
             Act::BoostOnly => self.request_boost(None),
         }
     }
 
     /// Starting a boost. The core decides whether the summary comes first (it then sends
     /// `Event::ConfirmBoost`, which opens the dialog).
-    pub(super) fn request_boost(&mut self, idx: Option<usize>) {
-        self.send(Intent::Boost { game: idx });
+    pub(super) fn request_boost(&mut self, game: Option<crate::app::GameId>) {
+        self.send(Intent::Boost { game });
     }
 }
 

@@ -21,9 +21,8 @@ pub mod window;
 pub(crate) mod spec;
 
 pub use boost::{power_summary, NoticeKind, Plan};
-pub use intent::{Event, Hint, Intent, Interest, Tone};
+pub use intent::{Event, GameId, Hint, Intent, Interest, PresetId, Tone};
 pub use spec::Target;
-pub use state::{apply_app_suggestions_to, apply_service_suggestions_to, apply_suggestions, apply_suggestions_to};
 pub use view::View;
 
 use crate::config::{Config, Game};
@@ -207,15 +206,15 @@ impl Core {
     }
 
     /// Check runs only: show the boost summary for this game whatever the "ask before boosting" option says.
-    pub(crate) fn show_boost_summary(&self, game: Option<usize>) {
+    pub(crate) fn show_boost_summary(&self, game: Option<GameId>) {
         let mut st = self.inner.lock();
         st.show_boost_summary(game);
         self.inner.release(st);
     }
 
-    /// The self-test only: adds its stand-in game (never saved) and selects it. Returns its index.
-    pub(crate) fn add_selftest_game(&self, game: Game) -> usize {
-        self.inner.lock().add_selftest_game(game)
+    /// The self-test only: adds its stand-in game (never saved) and selects it.
+    pub(crate) fn add_selftest_game(&self, game: Game) {
+        self.inner.lock().add_selftest_game(game);
     }
 }
 

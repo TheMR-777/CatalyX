@@ -15,7 +15,7 @@ impl CatalyxApp {
                 }
                 let (t, dark) = steps[self.tour_step];
                 self.tab = t;
-                self.edit(move |cfg| cfg.appearance = if dark { "dark".into() } else { "light".into() });
+                self.send(Intent::SetPref { key: "appearance".into(), value: if dark { "dark" } else { "light" }.into() });
             }
             if self.frames % SETTLE == SETTLE - 2 && !self.shot_requested {
                 self.shot_requested = true;

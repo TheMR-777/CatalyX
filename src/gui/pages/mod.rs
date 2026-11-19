@@ -13,7 +13,6 @@ use super::icons::{self, Ico};
 use super::widgets::{bold, faint};
 use super::{CatalyxApp, EditTarget, PickFor};
 use crate::app::Intent;
-use crate::config::Config;
 use egui::Context;
 use egui_components::{AlertChoice, AlertDialog, Button, Dialog};
 
@@ -31,10 +30,13 @@ pub enum Confirm {
     /// The summary shown before a boost starts: the game to start, or none for gaming mode alone,
     /// and the core's plan for exactly that game.
     Boost {
-        idx: Option<usize>,
+        game: Option<crate::app::GameId>,
         plan: crate::app::Plan,
     },
-    RemoveGame(usize),
+    RemoveGame {
+        id: String,
+        name: String,
+    },
     ResetConfig,
     EndApp {
         exe: String,
@@ -49,12 +51,6 @@ pub enum Confirm {
     },
     ClearApps,
     ClearServices,
-}
-
-/// Selects the catalog's gentle suggestions (for all games). Choices the person already made
-/// are never overwritten.
-pub fn apply_suggestions(app: &mut CatalyxApp) {
-    app.edit(crate::app::apply_suggestions);
 }
 
 /// A file dialog answered: a game file fills the form, a settings file goes to the core.
@@ -105,16 +101,14 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
                     }
                 });
             });
-            if use_suggestions {
-                apply_suggestions(app);
-            }
             if done || !open {
-                app.edit(|cfg| cfg.onboarded = true);
+                // One intent: the welcome is over, taking the suggestions when that was the choice.
+                app.send(Intent::FinishWelcome { use_suggestions });
                 return;
             }
         }
-        Confirm::Boost { idx, plan } => {
-            let game = idx.and_then(|i| app.v.config.games.get(i)).cloned();
+        Confirm::Boost { game: game_id, plan } => {
+            let game = game_id.as_ref().and_then(|id| app.v.config.games.iter().find(|g| g.id == *id)).cloned();
             let p = app.pal();
             let title = match &game {
                 Some(g) => format!("Boost & play {}?", g.name),
@@ -154,23 +148,17 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
             if go {
                 // "Don't ask me again" is applied by the core (the person can bring the summary back in
                 // Settings > Behaviour).
-                app.send(Intent::ConfirmBoost { game: *idx, dont_ask_again: dont });
+                app.send(Intent::ConfirmBoost { game: game_id.clone(), dont_ask_again: dont });
                 return;
             }
             if cancel || !open {
                 app.send(Intent::CancelBoost);
                 return;
             }
-        }        Confirm::RemoveGame(i) => {
-            let name = app.v.config.games.get(*i).map(|g| g.name.clone()).unwrap_or_default();
+        }        Confirm::RemoveGame { id, name } => {
             match AlertDialog::new(format!("Remove {name}?")).description("Only CatalyX's entry is removed. The game itself is not touched.").confirm_label("Remove").danger().show(ctx, &mut open) {
                 Some(AlertChoice::Confirm) => {
-                    let i = *i;
-                    if i < app.v.config.games.len() {
-                        app.edit(move |cfg| {
-                            cfg.games.remove(i);
-                        });
-                    }
+                    app.send(Intent::RemoveGame { id: id.clone() });
                     return;
                 }
                 Some(AlertChoice::Cancel) => return,
@@ -179,13 +167,7 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         }
         Confirm::ResetConfig => match AlertDialog::new("Reset everything?").description("Forgets all games, rules and presets and starts again with the suggestions. This cannot be undone.").confirm_label("Reset").danger().show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
-                app.edit(|cfg| {
-                    *cfg = Config::default();
-                    cfg.onboarded = true;
-                    // The text promises the suggestions, so apply them (they fill, never overwrite).
-                    crate::app::apply_suggestions(cfg);
-                });
-                app.toast_ok("Settings reset");
+                app.send(Intent::ResetConfig);
                 return;
             }
             Some(AlertChoice::Cancel) => return,
@@ -214,20 +196,9 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         }
         Confirm::DeletePreset { id, name } => match AlertDialog::new(format!("Delete {name}?")).description("Games using it go back to a built-in preset. This cannot be undone.").confirm_label("Delete").danger().show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
-                let id = id.clone();
-                app.edit(move |cfg| {
-                    if let Some(i) = cfg.presets.iter().position(|p| p.id == id && !p.builtin) {
-                        cfg.presets.remove(i);
-                        let fallback = cfg.presets.get(1.min(cfg.presets.len().saturating_sub(1))).map(|p| p.id.clone()).unwrap_or_default();
-                        for g in cfg.games.iter_mut().filter(|g| g.preset == id) {
-                            g.preset = fallback.clone();
-                        }
-                        if cfg.default_preset == id {
-                            cfg.default_preset = fallback;
-                        }
-                    }
-                });
-                app.ui.prof.target = EditTarget::Preset(1.min(app.v.config.presets.len().saturating_sub(1)));
+                app.send(Intent::DeletePreset { id: id.clone() });
+                // The core moves its games and the default to a built-in preset; edit that one next.
+                app.ui.prof.target = EditTarget::Preset(app.v.config.default_preset.clone());
                 return;
             }
             Some(AlertChoice::Cancel) => return,
@@ -235,13 +206,7 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         },
         Confirm::ClearApps => match AlertDialog::new("Set every app back to Keep?").description("Clears all app rules (for all games). You can bring the suggestions back with one click.").confirm_label("Clear rules").show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
-                app.edit(|cfg| {
-                    // "For all games" has to mean it: per-game rules would otherwise survive.
-                    cfg.apps.clear();
-                    for g in &mut cfg.games {
-                        g.apps.clear();
-                    }
-                });
+                app.send(Intent::ClearAppRules);
                 return;
             }
             Some(AlertChoice::Cancel) => return,
@@ -249,12 +214,7 @@ pub fn dialogs(app: &mut CatalyxApp, ctx: &Context) {
         },
         Confirm::ClearServices => match AlertDialog::new("Keep every service running?").description("Clears all service rules (for all games).").confirm_label("Clear rules").show(ctx, &mut open) {
             Some(AlertChoice::Confirm) => {
-                app.edit(|cfg| {
-                    cfg.services.clear();
-                    for g in &mut cfg.games {
-                        g.services.clear();
-                    }
-                });
+                app.send(Intent::ClearServiceRules);
                 return;
             }
             Some(AlertChoice::Cancel) => return,

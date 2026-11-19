@@ -1,8 +1,9 @@
 //! Services: choose which Windows background services pause while you play. Each is stopped the
 //! gentlest way Windows offers (dependents first, short time limit) and started again afterwards.
 
+use crate::app::Intent;
 use crate::catalog::{self, Impact};
-use crate::config::{service_is_protected, Config};
+use crate::config::service_is_protected;
 use crate::gui::icons::{self, Ico};
 use crate::gui::pages::Confirm;
 use crate::gui::widgets::*;
@@ -26,13 +27,14 @@ fn effective(app: &CatalyxApp, game: Option<usize>, name: &str) -> bool {
     rules.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v).unwrap_or(false)
 }
 
-fn set_rule(app: &mut CatalyxApp, game: Option<usize>, name: &str, on: bool) {
-    let name = name.to_string();
-    app.edit(move |cfg| set_rule_in(cfg, game, &name, on));
+/// The scope as an id: the page keeps its picker as an index, the core names games by id.
+fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<crate::app::GameId> {
+    game.and_then(|i| app.v.config.games.get(i)).map(|g| g.id.clone())
 }
 
-fn set_rule_in(cfg: &mut Config, game: Option<usize>, name: &str, on: bool) {
-    cfg.set_service_rule(game, name, on);
+fn set_rule(app: &mut CatalyxApp, game: Option<usize>, name: &str, on: bool) {
+    let scope = scope_id(app, game);
+    app.send(Intent::SetServiceRule { scope, name: name.to_string(), stop: on });
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -111,7 +113,7 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
                 .clicked()
             {
                 // Scoped like the switches above: a game gets its own rules, not the global ones.
-                app.edit(move |cfg| crate::app::apply_service_suggestions_to(cfg, game));
+                app.send(Intent::UseRecommendedServices { scope: scope_id(app, game) });
                 app.toast_ok("Recommended services selected");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Keep all running").small()).clicked() {

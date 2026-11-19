@@ -14,7 +14,7 @@ use egui::{vec2, RichText, Sense, Stroke, Ui};
 /// up, otherwise with one Windows prompt). The core saves and restores first, then closes this copy
 /// once the new one is starting.
 pub fn relaunch_admin(app: &mut CatalyxApp) {
-    app.send(Intent::RelaunchAdmin);
+    app.send(Intent::RelaunchAsAdmin);
 }
 
 pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
@@ -84,7 +84,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         pal.text,
                     );
                     if resp.clicked() {
-                        app.edit(move |cfg| cfg.theme = t.key().into());
+                        app.send(Intent::SetPref { key: "theme".into(), value: t.key().into() });
                     }
                     resp.on_hover_text(t.about());
                 }
@@ -111,7 +111,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if resp.on_hover_text(a.label()).clicked() {
-                        app.edit(move |cfg| cfg.accent = a.key().into());
+                        app.send(Intent::SetPref { key: "accent".into(), value: a.key().into() });
                     }
                 }
             });
@@ -122,7 +122,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
             setting_row(ui, "Surface tint", "How much of the accent bleeds into the window, sidebar and cards", |ui| {
                 let mut i = (tint as usize).min(2);
                 if segmented(ui, 214.0, &mut i, &theme::TINT_LABELS) {
-                    app.edit(move |cfg| cfg.tint = i as u8);
+                    app.send(Intent::SetPref { key: "tint".into(), value: i.to_string() });
                 }
             });
             hairline(ui);
@@ -130,7 +130,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                 let mut i = Style::ALL.iter().position(|s| *s == app.control_style()).unwrap_or(0);
                 let labels: Vec<&str> = Style::ALL.iter().map(|s| s.label()).collect();
                 if segmented(ui, 280.0, &mut i, &labels) {
-                    app.edit(move |cfg| cfg.boost_control = Style::ALL[i].key().into());
+                    app.send(Intent::SetPref { key: "boost-control".into(), value: Style::ALL[i].key().into() });
                 }
             });
             hairline(ui);
@@ -141,7 +141,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                     _ => 0,
                 };
                 if segmented(ui, 214.0, &mut i, &["Dark", "Light", "Windows"]) {
-                    app.edit(move |cfg| cfg.appearance = ["dark", "light", "system"][i].into());
+                    app.send(Intent::SetPref { key: "appearance".into(), value: ["dark", "light", "system"][i].into() });
                 }
             });
         },
@@ -176,7 +176,7 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
     // Task Scheduler is asked once by the core (off the UI thread) while this page is shown.
     let (task, watcher) = app.v.system.elevation.unwrap_or((false, false));
     let is_admin = app.v.system.admin;
-    let mut job: Option<(&'static str, &'static str)> = None;
+    let mut job: Option<Intent> = None;
     card_titled(
         ui,
         "Administrator and background",
@@ -209,10 +209,10 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
                 |ui| {
                     if task {
                         if ui.add(egui_components::Button::secondary("Remove")).clicked() {
-                            job = Some(("elevate remove", "One-click start removed"));
+                            job = Some(Intent::RemoveOneClickStart);
                         }
                     } else if ui.add(egui_components::Button::primary("Set up")).clicked() {
-                        job = Some(("elevate setup", "One-click administrator start is ready"));
+                        job = Some(Intent::SetupOneClickStart);
                     }
                 },
             );
@@ -228,19 +228,15 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
                 |ui| {
                     let mut on = watcher;
                     if ui.add(egui_components::Switch::new(&mut on)).changed() {
-                        job = Some(if on {
-                            ("autostart on", "Background watcher enabled")
-                        } else {
-                            ("autostart off", "Background watcher removed")
-                        });
+                        job = Some(Intent::SetWatcher { on });
                     }
                 },
             );
         },
     );
-    if let Some((args, done)) = job {
+    if let Some(intent) = job {
         // Runs as administrator (one prompt) off the UI thread; the core reports back in a toast.
-        app.send(Intent::RunElevated { args, done });
+        app.send(intent);
     }
 }
 

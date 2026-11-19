@@ -2,6 +2,7 @@
 //! Rules apply to all games or only to one; "Close" is the only choice that can lose work, and
 //! the suggestions never use it for programs that hold your data.
 
+use crate::app::Intent;
 use crate::catalog;
 use crate::config::{app_is_protected, Config, ProcAction};
 use crate::gui::icons::{self, Ico};
@@ -51,13 +52,14 @@ fn effective_in(cfg: &Config, game: Option<usize>, exe: &str) -> ProcAction {
     }
 }
 
-fn set_action(app: &mut CatalyxApp, game: Option<usize>, exe: &str, a: ProcAction) {
-    let exe = exe.to_string();
-    app.edit(move |cfg| set_action_in(cfg, game, &exe, a));
+/// The scope as an id: the page keeps its picker as an index, the core names games by id.
+fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<crate::app::GameId> {
+    game.and_then(|i| app.v.config.games.get(i)).map(|g| g.id.clone())
 }
 
-fn set_action_in(cfg: &mut Config, game: Option<usize>, exe: &str, a: ProcAction) {
-    cfg.set_app_rule(game, exe, a);
+fn set_action(app: &mut CatalyxApp, game: Option<usize>, exe: &str, a: ProcAction) {
+    let scope = scope_id(app, game);
+    app.send(Intent::SetAppRule { scope, exe: exe.to_string(), action: a });
 }
 
 fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
@@ -195,7 +197,7 @@ fn summary(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, w: f32) {
             ui.spacing_mut().item_spacing.x = 8.0;
             if ui.add(egui_components::Button::secondary("Use suggestions").small()).on_hover_text("Lowers browsers, chat and sync clients; pauses background helpers; closes only updaters and Windows extras. Never closes anything that holds your work.").clicked() {
                 // Only this scope's rules change; a game scope gets its own rules, not the global ones.
-                app.edit(move |cfg| crate::app::apply_app_suggestions_to(cfg, game));
+                app.send(Intent::UseSuggestedApps { scope: scope_id(app, game) });
                 app.toast_ok("Suggestions added (your own choices were kept)");
             }
             if w > 640.0 && ui.add(egui_components::Button::ghost("Set all to Keep").small()).clicked() {

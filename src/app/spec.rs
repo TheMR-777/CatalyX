@@ -9,11 +9,12 @@
 use crate::config::{Config, CpuLevel, GpuLevel, PowerChoice, Priority, Settings};
 use crate::gpu::GpuState;
 
-/// A preset or a game with its own settings. Indexes are used until named intents (T5) give them ids.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A preset or a game with its own settings, by id. An index goes stale as soon as something is
+/// removed; a skin holding one would silently edit the wrong profile.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Target {
-    Preset(usize),
-    Game(usize),
+    Preset(crate::app::PresetId),
+    Game(crate::app::GameId),
 }
 
 /// What a setting affects. Neutral: a skin may group these however it likes.

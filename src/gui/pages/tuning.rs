@@ -148,7 +148,7 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
                             .on_hover_text("Switch Windows to this plan right now")
                             .clicked()
                         {
-                            app.send(Intent::SetPowerPlan { guid: pl.guid.clone() });
+                            app.send(Intent::UsePowerPlan { guid: pl.guid.clone() });
                         }
                     });
                 });
@@ -260,7 +260,7 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
                 let limits = [75u32, 80, 83, 87];
                 let mut i = limits.iter().position(|x| *x == app.v.config.gpu_temp_limit_c).unwrap_or(2);
                 if dropdown(ui, "tune-heat", CONTROL_W, &mut i, &limits.iter().map(|x| format!("{x} \u{00b0}C")).collect::<Vec<_>>()) {
-                    app.edit(move |cfg| cfg.gpu_temp_limit_c = limits[i]);
+                    app.send(Intent::SetHeatLimit { c: limits[i] });
                 }
             });
             if !app_admin {
@@ -301,7 +301,8 @@ fn choice(app: &mut CatalyxApp, ui: &mut Ui, id: &str, key: &str, preset: usize)
     };
     let mut i = choices.iter().position(|c| c.key == current).unwrap_or(0);
     let labels: Vec<String> = choices.iter().map(|c| c.label.to_string()).collect();
+    let Some(pid) = app.v.config.presets.get(preset).map(|p| p.id.clone()) else { return };
     if dropdown(ui, id, CONTROL_W, &mut i, &labels) {
-        app.send(Intent::SetSetting { target: Target::Preset(preset), key: sp.key.into(), value: choices[i].key.into() });
+        app.send(Intent::SetSetting { target: Target::Preset(pid), key: sp.key.into(), value: choices[i].key.into() });
     }
 }

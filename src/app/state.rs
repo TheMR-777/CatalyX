@@ -2,11 +2,11 @@
 //! link, probes and their results, the boost policy), and `apply`, which carries out an intent.
 
 use super::boost::{self, BoostView};
-use super::intent::{Event, Hint, Intent, Interest, Tone};
+use super::intent::{Event, GameId, Hint, Intent, Interest, PresetId, Tone};
 use super::jobs::{Done, Job};
 use super::spec::{self, Target};
 use super::view::{Hardware, Library, System, View};
-use crate::config::{Config, Game, ProcAction};
+use crate::config::{Config, Game, Preset, ProcAction};
 use crate::engine::{BoostRequest, Cmd, Phase, SharedStatus, Status};
 use crate::procs::{self, SharedSnapshot, Snapshot};
 use crate::services;
@@ -66,7 +66,7 @@ pub struct State {
     /// When to trim the working set once after the window was minimised (None = it draws).
     pub(super) trim_due: Option<Instant>,
     /// The boost the summary is being shown for: only that one may be confirmed.
-    awaiting_confirm: Option<Option<usize>>,
+    awaiting_confirm: Option<Option<GameId>>,
     events: VecDeque<Event>,
     pub(super) rev: u64,
     /// The revision the skin last drew and when sampled readings may wake it again. The old window
@@ -323,7 +323,7 @@ impl State {
             Intent::Boost { game } => self.request_boost(game),
             Intent::ConfirmBoost { game, dont_ask_again } => {
                 // Only the boost the summary was shown for: a skin cannot start one without the core's say-so.
-                if self.awaiting_confirm.take() == Some(game) {
+                if self.awaiting_confirm.take() == Some(game.clone()) {
                     if dont_ask_again {
                         // The person can bring the summary back in Settings > Behaviour.
                         self.cfg_mut().confirm_boost = false;
@@ -337,24 +337,52 @@ impl State {
             Intent::ExitQuietDesktop => {
                 let _ = self.tx.send(Cmd::ExitQuietDesktop);
             }
-            Intent::AddGame { path, name, real_exe } => self.add_game(&path, name, real_exe),
+            Intent::SelectGame { id } => self.select_game(&id),
+            Intent::AddGame { path, name, args, real_exe } => self.add_game(&path, name, args, real_exe),
+            Intent::RemoveGame { id } => self.remove_game(&id),
+            Intent::EditGame { id, name, launch, args } => self.edit_game(&id, name, launch, args),
+            Intent::SetRealProgram { id, exe } => self.set_real_program(&id, exe),
+            Intent::SetGameProfile { id, preset } => self.set_game_profile(&id, preset),
+            Intent::GiveGameOwnSettings { id } => self.give_own_settings(&id),
+            Intent::FollowPreset { id } => self.follow_preset(&id),
             Intent::ScanLibrary => self.scan_library(),
             Intent::HideInstalled => {
                 Arc::make_mut(&mut self.library).installed = None;
                 self.rev += 1;
             }
             Intent::FindCandidates { id, folder } => self.find_candidates(id, folder),
+            Intent::NewPreset { from } => self.new_preset(from),
+            Intent::RenamePreset { id, name } => self.rename_preset(&id, name),
+            Intent::DeletePreset { id } => self.delete_preset(&id),
+            Intent::ResetPreset { id } => self.reset_preset(&id),
+            Intent::SetDefaultPreset { id } => self.set_default_preset(&id),
+            Intent::SetSetting { target, key, value } => self.set_setting(target, &key, &value),
+            Intent::SetAppRule { scope, exe, action } => self.set_app_rule(scope, exe, action),
+            Intent::UseSuggestedApps { scope } => self.use_suggested_apps(scope),
+            Intent::ClearAppRules => self.clear_app_rules(),
+            Intent::EndApp { exe, name } => self.end_app(&exe, &name),
+            Intent::SetServiceRule { scope, name, stop } => self.set_service_rule(scope, name, stop),
+            Intent::UseRecommendedServices { scope } => self.use_recommended_services(scope),
+            Intent::ClearServiceRules => self.clear_service_rules(),
+            Intent::UseSuggestions { scope } => self.use_suggestions(scope),
             Intent::RefreshHardware => self.refresh_hardware(),
             Intent::RefreshServices => self.refresh_services(),
             Intent::TestGraphicsCard => self.test_graphics_card(),
-            Intent::RunElevated { args, done } => self.run_elevated(args, done),
-            Intent::EndApp { exe, name } => self.end_app(&exe, &name),
-            Intent::RelaunchAdmin => self.relaunch_admin(),
-            Intent::SetPowerPlan { guid } => self.set_power_plan(guid),
+            Intent::UsePowerPlan { guid } => self.set_power_plan(guid),
             Intent::CreateBoostPlan { level } => self.create_boost_plan(level),
+            Intent::SetHeatLimit { c } => {
+                let cfg = self.cfg_mut();
+                cfg.gpu_temp_limit_c = c;
+                self.mark_dirty();
+            }
+            Intent::FinishWelcome { use_suggestions } => self.finish_welcome(use_suggestions),
+            Intent::SetupOneClickStart => self.run_elevated("elevate setup", "One-click administrator start is ready"),
+            Intent::RemoveOneClickStart => self.run_elevated("elevate remove", "One-click start removed"),
+            Intent::SetWatcher { on } => self.set_watcher(on),
+            Intent::RelaunchAsAdmin => self.relaunch_admin(),
             Intent::ExportConfig(path) => self.export_config(&path),
             Intent::ImportConfig(path) => self.import_config(&path),
-            Intent::SetSetting { target, key, value } => self.set_setting(target, &key, &value),
+            Intent::ResetConfig => self.reset_config(),
             Intent::SetOption { key, value } => {
                 // A bad key or value changes nothing; the catalogue is the only judge.
                 let cfg = self.cfg_mut();
@@ -362,24 +390,19 @@ impl State {
                     self.mark_dirty();
                 }
             }
-            Intent::Edit(f) => {
-                f(self.cfg_mut());
-                // The library may have shrunk, or the index may be stale: keep every reader safe.
-                self.cfg_mut().clamp_selected();
-                self.mark_dirty();
-            }
+            Intent::SetPref { key, value } => self.set_pref(&key, value),
         }
     }
 
     /// Changes one setting through the catalogue. Works on a copy first so a stale target or an
     /// unknown key leaves the config, its revision and its save timer untouched.
     fn set_setting(&mut self, target: Target, key: &str, value: &str) {
-        let mut s = match target {
-            Target::Preset(i) => match self.cfg.presets.get(i) {
+        let mut s = match &target {
+            Target::Preset(id) => match self.cfg.presets.iter().find(|p| p.id == *id) {
                 Some(p) => p.settings.clone(),
                 None => return,
             },
-            Target::Game(i) => match self.cfg.games.get(i).and_then(|g| g.custom.clone()) {
+            Target::Game(id) => match self.cfg.games.iter().find(|g| g.id == *id).and_then(|g| g.custom.clone()) {
                 Some(s) => s,
                 None => return,
             },
@@ -388,14 +411,14 @@ impl State {
             return;
         }
         let cfg = self.cfg_mut();
-        match target {
-            Target::Preset(i) => {
-                if let Some(p) = cfg.presets.get_mut(i) {
+        match &target {
+            Target::Preset(id) => {
+                if let Some(p) = cfg.presets.iter_mut().find(|p| p.id == *id) {
                     p.settings = s;
                 }
             }
-            Target::Game(i) => {
-                if let Some(g) = cfg.games.get_mut(i) {
+            Target::Game(id) => {
+                if let Some(g) = cfg.games.iter_mut().find(|g| g.id == *id) {
                     g.custom = Some(s);
                 }
             }
@@ -403,8 +426,241 @@ impl State {
         self.mark_dirty();
     }
 
+    /// The index of a game by id: ids survive removals, indexes do not.
+    fn game_index(&self, id: &str) -> Option<usize> {
+        self.cfg.games.iter().position(|g| g.id == id)
+    }
+
+    /// A rule scope as an index. No scope means all games; a scope whose game is gone is an error,
+    /// because treating it as "all games" would write the wrong list.
+    fn scope_index(&self, scope: &Option<GameId>) -> Result<Option<usize>, ()> {
+        match scope {
+            None => Ok(None),
+            Some(id) => self.game_index(id).map(Some).ok_or(()),
+        }
+    }
+
+    /// Selects a game by id (the Boost page's game picker). A stale id changes nothing.
+    fn select_game(&mut self, id: &str) {
+        let Some(i) = self.game_index(id) else { return };
+        if self.cfg.selected_game != i {
+            self.cfg_mut().selected_game = i;
+            self.mark_dirty();
+        }
+    }
+
+    fn remove_game(&mut self, id: &str) {
+        let Some(i) = self.game_index(id) else { return };
+        let cfg = self.cfg_mut();
+        cfg.games.remove(i);
+        // The library may have shrunk: keep every reader of the selected game safe.
+        cfg.clamp_selected();
+        self.mark_dirty();
+    }
+
+    fn edit_game(&mut self, id: &str, name: String, launch: String, args: String) {
+        let Some(i) = self.game_index(id) else { return };
+        let cfg = self.cfg_mut();
+        cfg.games[i].name = name;
+        cfg.games[i].launch = launch;
+        cfg.games[i].args = args;
+        self.mark_dirty();
+    }
+
+    fn set_real_program(&mut self, id: &str, exe: Option<String>) {
+        let Some(i) = self.game_index(id) else { return };
+        self.cfg_mut().games[i].real_exe = exe.unwrap_or_default();
+        self.mark_dirty();
+    }
+
+    fn set_game_profile(&mut self, id: &str, preset: PresetId) {
+        if !self.cfg.presets.iter().any(|p| p.id == preset) {
+            return;
+        }
+        let Some(i) = self.game_index(id) else { return };
+        let cfg = self.cfg_mut();
+        cfg.games[i].preset = preset;
+        // Choosing a preset means following it again; own settings would hide the choice.
+        cfg.games[i].custom = None;
+        self.mark_dirty();
+    }
+
+    fn give_own_settings(&mut self, id: &str) {
+        let Some(g) = self.cfg.games.iter().find(|g| g.id == id) else { return };
+        if g.custom.is_some() {
+            return;
+        }
+        let s = self.cfg.settings_for(Some(g));
+        let cfg = self.cfg_mut();
+        if let Some(g) = cfg.games.iter_mut().find(|g| g.id == id) {
+            g.custom = Some(s);
+        }
+        self.mark_dirty();
+    }
+
+    fn follow_preset(&mut self, id: &str) {
+        let Some(i) = self.game_index(id) else { return };
+        self.cfg_mut().games[i].custom = None;
+        self.mark_dirty();
+    }
+
+    fn new_preset(&mut self, from: Target) {
+        let base = match &from {
+            Target::Preset(id) => match self.cfg.presets.iter().find(|p| p.id == *id) {
+                Some(p) => p.settings.clone(),
+                None => return,
+            },
+            Target::Game(id) => match self.cfg.games.iter().find(|g| g.id == *id) {
+                Some(g) => g.custom.clone().unwrap_or_default(),
+                None => return,
+            },
+        };
+        let cfg = self.cfg_mut();
+        let n = cfg.presets.iter().filter(|p| !p.builtin).count() + 1;
+        let id = cfg.new_id("preset");
+        cfg.presets.push(Preset { id, name: format!("My preset {n}"), about: "Your own preset".into(), builtin: false, settings: base });
+        self.mark_dirty();
+    }
+
+    fn rename_preset(&mut self, id: &str, name: String) {
+        // A built-in's name is the catalogue's, not the person's to change.
+        let Some(i) = self.cfg.presets.iter().position(|p| p.id == id && !p.builtin) else { return };
+        self.cfg_mut().presets[i].name = name;
+        self.mark_dirty();
+    }
+
+    fn delete_preset(&mut self, id: &str) {
+        let Some(i) = self.cfg.presets.iter().position(|p| p.id == id && !p.builtin) else { return };
+        let cfg = self.cfg_mut();
+        cfg.presets.remove(i);
+        // Its games and the default move to a built-in preset rather than pointing at nothing.
+        let fallback = cfg.presets.get(1.min(cfg.presets.len().saturating_sub(1))).map(|p| p.id.clone()).unwrap_or_default();
+        for g in cfg.games.iter_mut().filter(|g| g.preset == id) {
+            g.preset = fallback.clone();
+        }
+        if cfg.default_preset == id {
+            cfg.default_preset = fallback;
+        }
+        self.mark_dirty();
+    }
+
+    fn reset_preset(&mut self, id: &str) {
+        let Some(b) = crate::config::builtin_presets().into_iter().find(|b| b.id == id) else { return };
+        let Some(i) = self.cfg.presets.iter().position(|p| p.id == id) else { return };
+        self.cfg_mut().presets[i].settings = b.settings;
+        self.mark_dirty();
+    }
+
+    fn set_default_preset(&mut self, id: &str) {
+        if !self.cfg.presets.iter().any(|p| p.id == id) {
+            return;
+        }
+        self.cfg_mut().default_preset = id.to_string();
+        self.mark_dirty();
+    }
+
+    fn set_app_rule(&mut self, scope: Option<GameId>, exe: String, action: ProcAction) {
+        let Ok(game) = self.scope_index(&scope) else { return };
+        self.cfg_mut().set_app_rule(game, &exe, action);
+        self.mark_dirty();
+    }
+
+    fn use_suggested_apps(&mut self, scope: Option<GameId>) {
+        let Ok(game) = self.scope_index(&scope) else { return };
+        apply_app_suggestions_to(self.cfg_mut(), game);
+        self.mark_dirty();
+    }
+
+    fn clear_app_rules(&mut self) {
+        let cfg = self.cfg_mut();
+        // "For all games" has to mean it: per-game rules would otherwise survive.
+        cfg.apps.clear();
+        for g in &mut cfg.games {
+            g.apps.clear();
+        }
+        self.mark_dirty();
+    }
+
+    fn set_service_rule(&mut self, scope: Option<GameId>, name: String, stop: bool) {
+        let Ok(game) = self.scope_index(&scope) else { return };
+        self.cfg_mut().set_service_rule(game, &name, stop);
+        self.mark_dirty();
+    }
+
+    fn use_recommended_services(&mut self, scope: Option<GameId>) {
+        let Ok(game) = self.scope_index(&scope) else { return };
+        apply_service_suggestions_to(self.cfg_mut(), game);
+        self.mark_dirty();
+    }
+
+    fn clear_service_rules(&mut self) {
+        let cfg = self.cfg_mut();
+        cfg.services.clear();
+        for g in &mut cfg.games {
+            g.services.clear();
+        }
+        self.mark_dirty();
+    }
+
+    fn use_suggestions(&mut self, scope: Option<GameId>) {
+        let Ok(game) = self.scope_index(&scope) else { return };
+        apply_suggestions_to(self.cfg_mut(), game);
+        self.mark_dirty();
+    }
+
+    fn finish_welcome(&mut self, use_suggestions: bool) {
+        let cfg = self.cfg_mut();
+        if use_suggestions {
+            apply_suggestions(cfg);
+        }
+        cfg.onboarded = true;
+        self.mark_dirty();
+    }
+
+    fn set_watcher(&mut self, on: bool) {
+        if on {
+            self.run_elevated("autostart on", "Background watcher enabled");
+        } else {
+            self.run_elevated("autostart off", "Background watcher removed");
+        }
+    }
+
+    fn reset_config(&mut self) {
+        let cfg = self.cfg_mut();
+        *cfg = Config::default();
+        cfg.onboarded = true;
+        // The dialog promises the suggestions, so apply them (they fill, never overwrite).
+        apply_suggestions(cfg);
+        self.mark_dirty();
+        self.toast(Tone::Ok, "Settings reset");
+    }
+
+    /// A look preference: stored as it comes, but only for the five fields the classic skin uses
+    /// until Phase 1b moves them under `skins.<name>`.
+    fn set_pref(&mut self, key: &str, value: String) {
+        let tint = value.parse::<u8>().ok().filter(|n| *n <= 2);
+        let known = match key {
+            "theme" | "accent" | "boost-control" => true,
+            "appearance" => matches!(value.as_str(), "dark" | "light" | "system"),
+            "tint" => tint.is_some(),
+            _ => false,
+        };
+        if !known {
+            return;
+        }
+        let cfg = self.cfg_mut();
+        match key {
+            "theme" => cfg.theme = value,
+            "accent" => cfg.accent = value,
+            "boost-control" => cfg.boost_control = value,
+            "appearance" => cfg.appearance = value,
+            _ => cfg.tint = tint.unwrap_or(0),
+        }
+        self.mark_dirty();
+    }
+
     /// Starting a boost: first the summary of what will change (unless the person turned that off).
-    fn request_boost(&mut self, game: Option<usize>) {
+    fn request_boost(&mut self, game: Option<GameId>) {
         if self.cfg.confirm_boost {
             self.show_boost_summary(game);
         } else {
@@ -414,10 +670,17 @@ impl State {
 
     /// Asks the skin to show the summary for this boost and waits for its answer. The plan is made
     /// for exactly this game now, so a skin never has to work out which game the summary belongs to.
-    pub(super) fn show_boost_summary(&mut self, game: Option<usize>) {
-        let target = game.and_then(|i| self.cfg.games.get(i));
+    pub(super) fn show_boost_summary(&mut self, game: Option<GameId>) {
+        let idx = match &game {
+            Some(id) => match self.game_index(id) {
+                Some(i) => Some(i),
+                None => return,
+            },
+            None => None,
+        };
+        let target = idx.and_then(|i| self.cfg.games.get(i));
         let plan = boost::plan(&self.cfg, target, &self.services, self.system.admin);
-        self.awaiting_confirm = Some(game);
+        self.awaiting_confirm = Some(game.clone());
         self.event(Event::ConfirmBoost { game, plan });
     }
 
@@ -436,7 +699,15 @@ impl State {
         }
     }
 
-    fn boost_game(&mut self, idx: Option<usize>) {
+    fn boost_game(&mut self, id: Option<GameId>) {
+        let idx = match &id {
+            // A game that is gone cannot be started: gaming mode would be a surprising substitute.
+            Some(id) => match self.game_index(id) {
+                Some(i) => Some(i),
+                None => return,
+            },
+            None => None,
+        };
         let game = idx.and_then(|i| self.cfg.games.get(i)).cloned();
         if let Some(i) = idx {
             let cfg = self.cfg_mut();
@@ -497,7 +768,7 @@ impl State {
     }
 
     /// Adds a game from a path or store link (used by the form, drag-and-drop and the importer).
-    fn add_game(&mut self, path: &str, name: Option<String>, real_exe: Option<String>) {
+    fn add_game(&mut self, path: &str, name: Option<String>, args: String, real_exe: Option<String>) {
         let path = path.trim().trim_matches('"').to_string();
         if path.is_empty() {
             return;
@@ -526,6 +797,7 @@ impl State {
             id: id.clone(),
             name: name.clone(),
             launch: path.clone(),
+            args,
             preset,
             real_exe: real_exe.unwrap_or_default(),
             ..Default::default()
@@ -574,20 +846,20 @@ impl State {
 
 /// Selects the catalog's gentle suggestions for every game. Choices the person already made are
 /// never overwritten.
-pub fn apply_suggestions(cfg: &mut Config) {
+fn apply_suggestions(cfg: &mut Config) {
     apply_suggestions_to(cfg, None);
 }
 
 /// Selects the catalog's gentle suggestions for one scope (None = all games). App suggestions only
 /// fill actions still on Keep; service suggestions only fill services nobody has answered for.
-pub fn apply_suggestions_to(cfg: &mut Config, game: Option<usize>) {
+fn apply_suggestions_to(cfg: &mut Config, game: Option<usize>) {
     apply_app_suggestions_to(cfg, game);
     apply_service_suggestions_to(cfg, game);
 }
 
 /// The app half of `apply_suggestions_to`: never touches a program that already has an action,
 /// whether the rule sits on the game or in the global list.
-pub fn apply_app_suggestions_to(cfg: &mut Config, game: Option<usize>) {
+fn apply_app_suggestions_to(cfg: &mut Config, game: Option<usize>) {
     let current = cfg.apps_for(game.and_then(|i| cfg.games.get(i)));
     for (exe, a) in crate::catalog::suggested_apps() {
         // A game's own rule is always explicit, even when it says Keep (the game map only stores
@@ -602,7 +874,7 @@ pub fn apply_app_suggestions_to(cfg: &mut Config, game: Option<usize>) {
 /// The service half: an answer recorded in this scope is the person's choice and stays as it is.
 /// For a game, an answer recorded globally counts too: the game map only holds differences, so
 /// silence there means "follow the global list", not "nobody has answered".
-pub fn apply_service_suggestions_to(cfg: &mut Config, game: Option<usize>) {
+fn apply_service_suggestions_to(cfg: &mut Config, game: Option<usize>) {
     for s in crate::catalog::KNOWN_SERVICES.iter().filter(|s| s.recommended) {
         // Windows protects these: they are never stopped, so a rule for one would only be noise.
         if crate::config::service_is_protected(s.name) {
@@ -711,7 +983,7 @@ mod tests {
         st.apply(Intent::ConfirmBoost { game: None, dont_ask_again: false });
         assert!(rx.try_recv().is_err(), "a cancelled summary cannot be confirmed later");
         st.take_events();
-        st.apply(Intent::Edit(Box::new(|c| c.confirm_boost = false)));
+        st.apply(Intent::SetOption { key: "confirm-boost".into(), value: "off".into() });
         assert!(st.dirty_since.is_some(), "an edit is saved later");
         st.apply(Intent::Boost { game: None });
         assert!(matches!(rx.try_recv(), Ok(Cmd::Boost(_))));
@@ -723,8 +995,9 @@ mod tests {
     fn the_summary_plan_is_for_the_game_that_asked_for_it() {
         let (mut st, _rx) = state();
         let cfg = st.cfg_mut();
-        cfg.games.push(Game { name: "One".into(), ..Default::default() });
+        cfg.games.push(Game { id: "one".into(), name: "One".into(), ..Default::default() });
         cfg.games.push(Game {
+            id: "two".into(),
             name: "Two".into(),
             custom: Some(crate::config::Settings {
                 power: crate::config::PowerChoice::Keep,
@@ -733,17 +1006,18 @@ mod tests {
             }),
             ..Default::default()
         });
-        // The selected game is still the first; the summary is asked for the second.
-        st.apply(Intent::Boost { game: Some(1) });
+        // The selected game is still the first; the summary is asked for the second, by id.
+        st.apply(Intent::Boost { game: Some("two".into()) });
         let events = st.take_events();
         match events.as_slice() {
-            [Event::ConfirmBoost { game: Some(1), plan }] => {
+            [Event::ConfirmBoost { game: Some(id), plan }] => {
+                assert_eq!(id, "two", "the event names the game that asked for the summary");
                 assert!(
                     plan.lines.iter().all(|l| !l.contains("power plan")),
                     "the plan belongs to the game being confirmed, not the selected one"
                 );
             }
-            other => panic!("expected a summary for game 1, got {other:?}"),
+            other => panic!("expected a summary for game two, got {other:?}"),
         }
     }
 
@@ -904,7 +1178,7 @@ mod tests {
 
         // Any config edit rebuilds it: deciding which fields a plan reads would be fragile, and the
         // rebuild is cheap compared with the frame that follows an edit.
-        st.apply(Intent::Edit(Box::new(|c| c.boost_control = "gauge".into())));
+        st.apply(Intent::SetPref { key: "boost-control".into(), value: "gauge".into() });
         let after_edit = st.view().boost.clone();
         assert!(!Arc::ptr_eq(&first, &after_edit));
 
@@ -920,5 +1194,30 @@ mod tests {
         let after_status = st.view().boost.clone();
         assert!(!Arc::ptr_eq(&after_services, &after_status));
         assert_eq!(after_status.progress, 1.0);
+    }
+
+    #[test]
+    fn a_stale_id_does_nothing_instead_of_hitting_the_wrong_entry() {
+        let (mut st, rx) = state();
+        st.cfg_mut().games.push(Game { id: "one".into(), name: "One".into(), ..Default::default() });
+        st.apply(Intent::Boost { game: Some("gone".into()) });
+        assert!(rx.try_recv().is_err(), "a removed game is not started, and not swapped for gaming mode");
+        st.apply(Intent::SelectGame { id: "gone".into() });
+        assert_eq!(st.cfg.selected_game, 0, "a dangling selection is ignored");
+        st.apply(Intent::SetSetting { target: Target::Preset("gone".into()), key: "priority".into(), value: "high".into() });
+        assert!(st.dirty_since.is_none(), "a stale target leaves the config and its save timer untouched");
+        st.apply(Intent::RemoveGame { id: "one".into() });
+        assert!(st.cfg.games.is_empty(), "a real id removes exactly that game");
+        assert!(st.take_events().is_empty(), "an id from a skin is not a licence to toast");
+    }
+
+    #[test]
+    fn a_rule_for_a_removed_game_never_becomes_the_global_rule() {
+        let (mut st, _rx) = state();
+        st.apply(Intent::SetAppRule { scope: Some("gone".into()), exe: "chat.exe".into(), action: ProcAction::Close });
+        st.apply(Intent::SetServiceRule { scope: Some("gone".into()), name: "DiagTrack".into(), stop: true });
+        // A fresh config carries suggested app rules, so the check is that this one did not land.
+        assert!(!st.cfg.apps.contains_key("chat.exe"), "a stale scope must not be read as 'all games'");
+        assert!(st.cfg.services.is_empty(), "the same for services");
     }
 }
