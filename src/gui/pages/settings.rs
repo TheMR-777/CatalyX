@@ -1,5 +1,6 @@
 //! Settings: look, behaviour, administrator start, the optional background watcher, your data.
 
+use crate::app::spec;
 use crate::app::{window, Intent};
 use crate::gui::control::Style;
 use crate::gui::pages::Confirm;
@@ -153,44 +154,20 @@ fn behaviour(app: &mut CatalyxApp, ui: &mut Ui) {
         "Behaviour",
         |_| {},
         |ui| {
-            // The view is read-only: each switch flips a copy of its value and sends the change to the core.
-            let c = app.v.config.clone();
-            let (mut restore, mut keep_off, mut reopen, mut confirm, mut auto) =
-                (c.restore_when_game_closes, c.keep_apps_off, c.reopen_closed_apps, c.confirm_boost, c.auto_boost_known_games);
-            setting_row(ui, "Restore when the game closes", "Everything is put back automatically, after a short grace period", |ui| {
-                if ui.add(egui_components::Switch::new(&mut restore)).changed() {
-                    app.edit(move |cfg| cfg.restore_when_game_closes = restore);
-                }
-            });
-            hairline(ui);
-            setting_row(
-                ui,
-                "Keep chosen apps and services off",
-                "If one starts again while you play, it is closed or stopped again",
-                |ui| {
-                    if ui.add(egui_components::Switch::new(&mut keep_off)).changed() {
-                        app.edit(move |cfg| cfg.keep_apps_off = keep_off);
+            // Generated from the options catalogue: the view is read-only, so each switch flips a
+            // copy of its value and sends the change to the core.
+            let rows: Vec<&spec::OptionSpec> = spec::OPTIONS.iter().filter(|o| !o.under_admin).collect();
+            for (i, spec) in rows.iter().enumerate() {
+                let mut on = spec.get(&app.v.config);
+                setting_row(ui, spec.label, spec.hint, |ui| {
+                    if ui.add(egui_components::Switch::new(&mut on)).changed() {
+                        app.send(Intent::SetOption { key: spec.key.into(), value: spec::onoff(on).into() });
                     }
-                },
-            );
-            hairline(ui);
-            setting_row(ui, "Reopen closed apps afterwards", "Closed apps start again, but unsaved work is gone either way", |ui| {
-                if ui.add(egui_components::Switch::new(&mut reopen)).changed() {
-                    app.edit(move |cfg| cfg.reopen_closed_apps = reopen);
+                });
+                if i + 1 < rows.len() {
+                    hairline(ui);
                 }
-            });
-            hairline(ui);
-            setting_row(ui, "Ask before boosting", "A short summary of what is about to change, with a way to switch it off", |ui| {
-                if ui.add(egui_components::Switch::new(&mut confirm)).changed() {
-                    app.edit(move |cfg| cfg.confirm_boost = confirm);
-                }
-            });
-            hairline(ui);
-            setting_row(ui, "Boost known games when they start", "Boosts games started outside CatalyX while this window is open", |ui| {
-                if ui.add(egui_components::Switch::new(&mut auto)).changed() {
-                    app.edit(move |cfg| cfg.auto_boost_known_games = auto);
-                }
-            });
+            }
         },
     );
 }
@@ -199,7 +176,6 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
     // Task Scheduler is asked once by the core (off the UI thread) while this page is shown.
     let (task, watcher) = app.v.system.elevation.unwrap_or((false, false));
     let is_admin = app.v.system.admin;
-    let mut run_as_admin = app.v.config.run_as_admin;
     let mut job: Option<(&'static str, &'static str)> = None;
     card_titled(
         ui,
@@ -212,16 +188,15 @@ fn admin(app: &mut CatalyxApp, ui: &mut Ui) {
             }
         },
         |ui| {
-            setting_row(
-                ui,
-                "Open CatalyX as administrator",
-                "Needed to stop services and to boost games that run as administrator",
-                |ui| {
-                    if ui.add(egui_components::Switch::new(&mut run_as_admin)).changed() {
-                        app.edit(move |cfg| cfg.run_as_admin = run_as_admin);
+            // The same catalogue row as `option run-as-admin`, so the form and the CLI cannot drift.
+            if let Some(run_as_admin) = spec::option("run-as-admin") {
+                let mut on = run_as_admin.get(&app.v.config);
+                setting_row(ui, run_as_admin.label, run_as_admin.hint, |ui| {
+                    if ui.add(egui_components::Switch::new(&mut on)).changed() {
+                        app.send(Intent::SetOption { key: run_as_admin.key.into(), value: spec::onoff(on).into() });
                     }
-                },
-            );
+                });
+            }
             hairline(ui);
             setting_row(
                 ui,

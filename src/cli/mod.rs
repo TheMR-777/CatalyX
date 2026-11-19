@@ -10,10 +10,11 @@ mod profiles;
 mod system;
 mod util;
 
-use crate::config::{self, Config, CpuLevel, Game, GpuLevel, PowerChoice, Priority, ProcAction, Settings};
+use crate::config::{self, Config, CpuLevel, Game, GpuLevel, ProcAction};
 use crate::engine::{self, BoostRequest, Cmd, Phase};
-use crate::{ffi, gpu, power, procs, services};
-use help::HELP;
+use crate::{app, ffi, gpu, power, procs, services};
+use app::spec;
+use app::Target;
 use serde_json::json;
 use std::time::{Duration, Instant};
 use util::*;
@@ -96,7 +97,7 @@ impl Cli {
         };
         match cmd.as_str() {
             "help" | "?" => {
-                print!("{HELP}");
+                print!("{}", help::text());
                 Ok(())
             }
             "version" => {

@@ -1,13 +1,14 @@
 //! Profiles: global presets (Gentle, Balanced, Max Squeeze and your own) and per-game settings.
 //! A game follows a preset until you give it its own settings.
 
-use crate::config::{CpuLevel, GpuLevel, PowerChoice, Preset, Priority, Settings};
-use crate::gui::icons::Ico;
+use crate::app::spec::{self, Group, Kind, Spec, Value};
+use crate::app::Intent;
+use crate::config::Preset;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget};
-use egui::{vec2, Align, Layout, RichText, ScrollArea, Sense, Stroke, Ui};
+use egui::{vec2, Align, Layout, ScrollArea, Sense, Stroke, Ui};
 
 pub struct ProfUi {
     pub target: EditTarget,
@@ -175,9 +176,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui) {
 }
 
 fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
-    let p = app.pal();
     let target = app.ui.prof.target;
-    let admin = app.v.system.admin;
     ScrollArea::vertical().id_salt("profile-editor").auto_shrink([false, false]).show(ui, |ui| {
         card(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -238,148 +237,69 @@ fn editor(app: &mut CatalyxApp, ui: &mut Ui) {
             }
         });
         ui.add_space(10.0);
-        let target = app.ui.prof.target;
-        let mut s: Settings = match target {
-            EditTarget::Preset(i) => app.v.config.presets[i].settings.clone(),
-            EditTarget::Game(i) => app.v.config.games[i].custom.clone().unwrap_or_default(),
-        };
-        let before = s.clone();
-        settings_editor(ui, &mut s, admin, &p, app.v.hardware.gpu.as_ref());
-        if s != before {
-            app.edit(move |cfg| match target {
-                EditTarget::Preset(i) => cfg.presets[i].settings = s,
-                EditTarget::Game(i) => cfg.games[i].custom = Some(s),
-            });
+        settings_editor(app, ui, target);
+    });
+}
+
+/// The full settings form, shared by presets and per-game settings, generated from the catalogue.
+/// Every change goes through `Intent::SetSetting`, so a skin never writes the config itself.
+fn settings_editor(app: &mut CatalyxApp, ui: &mut Ui, target: EditTarget) {
+    let admin = app.v.system.admin;
+    let gpu = app.v.hardware.gpu.clone();
+    let s = match target {
+        EditTarget::Preset(i) => app.v.config.presets[i].settings.clone(),
+        EditTarget::Game(i) => app.v.config.games[i].custom.clone().unwrap_or_default(),
+    };
+    let mut first = true;
+    for group in Group::ALL {
+        let rows: Vec<&Spec> = spec::SETTINGS.iter().filter(|sp| sp.group == group).collect();
+        if rows.is_empty() {
+            continue;
         }
-    });
-}
-
-/// The full settings form, shared by presets and per-game settings. Returns nothing: the caller
-/// compares before and after.
-pub fn settings_editor(ui: &mut Ui, s: &mut Settings, admin: bool, p: &crate::gui::theme::Palette, gpu: Option<&crate::gpu::GpuState>) {
-    let need_admin = if admin { "" } else { " (needs administrator)" };
-    let w = CONTROL_W;
-    card_titled(
-        ui,
-        "Performance",
-        |_| {},
-        |ui| {
-            ui.set_width(ui.available_width());
-            setting_row(ui, "Game priority", s.priority.hint(), |ui| {
-                let mut i = Priority::ALL.iter().position(|x| *x == s.priority).unwrap_or(0);
-                if dropdown(ui, "pr-priority", w, &mut i, &Priority::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    s.priority = Priority::ALL[i];
+        // One gap between cards, as before: a trailing gap would make the last card taller.
+        if !first {
+            ui.add_space(10.0);
+        }
+        first = false;
+        card_titled(
+            ui,
+            group.label(),
+            |_| {},
+            |ui| {
+                ui.set_width(ui.available_width());
+                for (i, sp) in rows.iter().enumerate() {
+                    let title = if sp.needs_admin && !admin { format!("{} (needs administrator)", sp.label) } else { sp.label.to_string() };
+                    let hint = sp.hint_text(&s, gpu.as_ref());
+                    match sp.kind {
+                        Kind::Switch => {
+                            let Value::Switch(mut on) = sp.get(&s) else { continue };
+                            setting_row(ui, &title, &hint, |ui| {
+                                if ui.add(egui_components::Switch::new(&mut on)).changed() {
+                                    app.send(Intent::SetSetting { target, key: sp.key.into(), value: spec::onoff(on).into() });
+                                }
+                            });
+                        }
+                        Kind::Choice(choices) => {
+                            let current = match sp.get(&s) {
+                                Value::Choice(k) => k,
+                                Value::Switch(_) => "",
+                            };
+                            let mut idx = choices.iter().position(|c| c.key == current).unwrap_or(0);
+                            let labels: Vec<String> = choices.iter().map(|c| c.label.to_string()).collect();
+                            setting_row(ui, &title, &hint, |ui| {
+                                if dropdown(ui, &format!("pr-{}", sp.key), CONTROL_W, &mut idx, &labels) {
+                                    app.send(Intent::SetSetting { target, key: sp.key.into(), value: choices[idx].key.into() });
+                                }
+                            });
+                        }
+                    }
+                    if i + 1 < rows.len() {
+                        hairline(ui);
+                    }
                 }
-            });
-            hairline(ui);
-            setting_row(ui, "Power plan", s.power.hint(), |ui| {
-                let mut i = PowerChoice::ALL.iter().position(|x| *x == s.power).unwrap_or(0);
-                if dropdown(ui, "pr-power", w, &mut i, &PowerChoice::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    s.power = PowerChoice::ALL[i];
-                }
-            });
-            hairline(ui);
-            setting_row(ui, "CPU performance", s.cpu.hint(), |ui| {
-                let mut i = CpuLevel::ALL.iter().position(|x| *x == s.cpu).unwrap_or(0);
-                if dropdown(ui, "pr-cpu", w, &mut i, &CpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    s.cpu = CpuLevel::ALL[i];
-                }
-            });
-            hairline(ui);
-            setting_row(ui, "Graphics card tuning", &crate::gpu::level_hint(s.gpu, gpu), |ui| {
-                let mut i = GpuLevel::ALL.iter().position(|x| *x == s.gpu).unwrap_or(0);
-                if dropdown(ui, "pr-gpu", w, &mut i, &GpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    s.gpu = GpuLevel::ALL[i];
-                }
-            });
-            hairline(ui);
-            toggle(
-                ui,
-                "Disk and memory priority for the game",
-                "The game gets the disk first: less stutter while it streams textures",
-                &mut s.io_boost,
-            );
-        },
-    );
-    ui.add_space(10.0);
-    card_titled(
-        ui,
-        "Apps, services and memory",
-        |_| {},
-        |ui| {
-            ui.set_width(ui.available_width());
-            toggle(ui, "Handle my app rules", "Lower, pause or close the apps you chose in Apps", &mut s.apps);
-            hairline(ui);
-            toggle(
-                ui,
-                &format!("Pause my chosen services{need_admin}"),
-                "Stopped for the session, started again afterwards",
-                &mut s.services,
-            );
-            hairline(ui);
-            toggle(ui, "Lower everything else", "Every other app of yours runs at the lowest priority", &mut s.lower_others);
-            hairline(ui);
-            toggle(ui, "Free memory before the game starts", "Trims what background apps are holding", &mut s.clean_ram);
-            hairline(ui);
-            toggle(
-                ui,
-                &format!("Also flush cached memory{need_admin}"),
-                "Empties Windows' standby list so the game's memory is free at once",
-                &mut s.purge_standby,
-            );
-        },
-    );
-    ui.add_space(10.0);
-    card_titled(
-        ui,
-        "Windows while you play",
-        |_| {},
-        |ui| {
-            ui.set_width(ui.available_width());
-            toggle(
-                ui,
-                "Windows Game Mode",
-                "Let Windows itself favour the game and hold back updates and drivers",
-                &mut s.windows_game_mode,
-            );
-            hairline(ui);
-            toggle(ui, "Background recording off", "Stops Game Bar capture from recording behind the game", &mut s.game_dvr_off);
-            hairline(ui);
-            toggle(ui, "Quiet notifications", "No pop-ups on top of the game", &mut s.notifications_off);
-            hairline(ui);
-            toggle(
-                ui,
-                "Keep Windows efficiency mode off for the game",
-                "Stops Windows slowing the game down to save power",
-                &mut s.no_power_throttling,
-            );
-            hairline(ui);
-            toggle(
-                ui,
-                &format!("Pause automatic maintenance{need_admin}"),
-                "No scheduled defrag or scans during the game",
-                &mut s.pause_maintenance,
-            );
-            hairline(ui);
-            toggle(ui, "Transparency effects off", "Saves a little graphics power on weak PCs", &mut s.transparency_off);
-            hairline(ui);
-            toggle(
-                ui,
-                &format!("Multimedia scheduler favours games{need_admin}"),
-                "Windows' own game scheduling class, tuned up",
-                &mut s.mmcss_games,
-            );
-            hairline(ui);
-            toggle(ui, "Quiet desktop", "Taskbar off while you play; Ctrl+Alt+End brings it back", &mut s.quiet_desktop);
-        },
-    );
-    let _ = (p, RichText::new(""), Ico::Check);
-}
-
-fn toggle(ui: &mut Ui, title: &str, hint: &str, value: &mut bool) {
-    setting_row(ui, title, hint, |ui| {
-        ui.add(egui_components::Switch::new(value));
-    });
+            },
+        );
+    }
 }
 
 fn short(s: &str, n: usize) -> String {

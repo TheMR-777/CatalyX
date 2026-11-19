@@ -85,9 +85,11 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
    bump `CONFIG_VERSION` and add an idempotent migration in `Config::migrate` (and a test, see
    `max_squeeze_gets_the_quiet_desktop_once...`). Never overwrite a person's own presets or per-game settings.
 4. `src/selftest.rs`: it builds a `Settings` literal; add the field.
-5. `src/cli/profiles.rs`: a key in `describe()` and `apply_setting()`; add it to the `KEYS` text in
-   `src/cli/help.rs`.
-6. `src/gui/pages/profiles.rs`: a `toggle(...)`; `src/app/boost.rs`: a line in `plan()` (and its test).
+5. `src/app/spec.rs`: one row in `SETTINGS` (key, label, hint, group, administrator need, CLI order, help position,
+   kind). The CLI's `show`/`set`, the `help` KEYS block and the classic Profiles form read it; do not list the
+   setting anywhere else. A new CLI token or alias also belongs in that row: `spec::set` is the only parser for both
+   the CLI and the window. App options (the Settings page and `catalyx option`) are one `OPTIONS` row in the same file.
+6. `src/app/boost.rs`: a line in `plan()` (and its test).
 7. `src/engine/`: apply it (rule 1) and undo it.
 8. Docs: `docs/HOW-IT-WORKS.md` (and `docs/CLI.md` if the help text changed).
 
@@ -110,6 +112,11 @@ dark)`. Check every visual change in dark and light and at the minimum size (760
 - **A minimised egui window gets no more frames.** Anything that must happen while minimised lives on the
   core's upkeep thread (`src/app/mod.rs`), not in `logic()`: a hint says whether the window draws, and the
   upkeep wakes it only when there is something new to show.
+- **A close is a request, not a command.** eframe treats `ViewportCommand::Close` as a close request, and cancels
+  the close whenever `ViewportCommand::CancelClose` is in the same frame's commands. Never cancel after the core
+  answered `ReadyToClose`/`ReadyToQuit` (see `gui::cancel_close`), or the window asks itself to close forever. A
+  close request sent before the window is shown is dropped by Windows; `check.ps1` waits for "window shown" before
+  testing the taskbar's Close.
 - `GetActiveWindow` is per-thread; from another thread use `ffi::our_window()` (finds the window by title).
 - **UAC may be off** (every process elevated, no second token). Code that wants "the ordinary token" must
   fall back to the token the shell already has (`shell.rs`).

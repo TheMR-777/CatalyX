@@ -1,8 +1,8 @@
 //! Tuning: power plan, CPU performance and graphics card clocks, with live readings from the
 //! processor and the driver as proof that a setting does what it says.
 
-use crate::app::Intent;
-use crate::config::{CpuLevel, GpuLevel, PowerChoice};
+use crate::app::spec::{self, Kind, Value};
+use crate::app::{Intent, Target};
 use crate::gpu;
 use crate::gui::icons::Ico;
 use crate::gui::pages::Confirm;
@@ -93,10 +93,7 @@ fn cpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
             hairline(ui);
             let level = app.v.config.presets[idx].settings.cpu;
             setting_row(ui, "CPU performance", level.hint(), |ui| {
-                let mut i = CpuLevel::ALL.iter().position(|x| *x == level).unwrap_or(0);
-                if dropdown(ui, "tune-cpu", CONTROL_W, &mut i, &CpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    app.edit(move |cfg| cfg.presets[idx].settings.cpu = CpuLevel::ALL[i]);
-                }
+                choice(app, ui, "tune-cpu", "cpu", idx);
             });
             ui.add_space(4.0);
             egui::Frame::new().fill(p.well).stroke(egui::Stroke::new(1.0, p.line)).corner_radius(10).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
@@ -125,18 +122,10 @@ fn power_card(app: &mut CatalyxApp, ui: &mut Ui) {
             }
         },
         |ui| {
-            let choice = app.v.config.presets[idx].settings.power;
-            setting_row(ui, "Power plan", choice.hint(), |ui| {
-                let mut i = PowerChoice::ALL.iter().position(|x| *x == choice).unwrap_or(0);
-                if dropdown(
-                    ui,
-                    "tune-power",
-                    CONTROL_W,
-                    &mut i,
-                    &PowerChoice::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>(),
-                ) {
-                    app.edit(move |cfg| cfg.presets[idx].settings.power = PowerChoice::ALL[i]);
-                }
+            let power = app.v.config.presets[idx].settings.power;
+            let hint = power.hint();
+            setting_row(ui, "Power plan", hint, |ui| {
+                choice(app, ui, "tune-power", "power", idx);
             });
             hairline(ui);
             ui.label(faint(ui, "Plans on this PC", 12.0));
@@ -264,10 +253,7 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
             let level = app.v.config.presets[idx].settings.gpu;
             let hint = gpu::level_hint(level, Some(&st));
             setting_row(ui, "Graphics tuning", &hint, |ui| {
-                let mut i = GpuLevel::ALL.iter().position(|x| *x == level).unwrap_or(0);
-                if dropdown(ui, "tune-gpu", CONTROL_W, &mut i, &GpuLevel::ALL.iter().map(|x| x.label().to_string()).collect::<Vec<_>>()) {
-                    app.edit(move |cfg| cfg.presets[idx].settings.gpu = GpuLevel::ALL[i]);
-                }
+                choice(app, ui, "tune-gpu", "gpu", idx);
             });
             hairline(ui);
             setting_row(ui, "Heat limit", "Clocks go back to normal at once above this temperature", |ui| {
@@ -301,5 +287,21 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
     );
     if refresh {
         app.send(Intent::RefreshHardware);
+    }
+}
+
+/// One catalogue choice as a drop-down. Tuning edits the selected preset; the labels, the current
+/// value and the change all come from `app/spec.rs`.
+fn choice(app: &mut CatalyxApp, ui: &mut Ui, id: &str, key: &str, preset: usize) {
+    let Some(sp) = spec::setting(key) else { return };
+    let Kind::Choice(choices) = sp.kind else { return };
+    let current = match sp.get(&app.v.config.presets[preset].settings) {
+        Value::Choice(k) => k,
+        Value::Switch(_) => "",
+    };
+    let mut i = choices.iter().position(|c| c.key == current).unwrap_or(0);
+    let labels: Vec<String> = choices.iter().map(|c| c.label.to_string()).collect();
+    if dropdown(ui, id, CONTROL_W, &mut i, &labels) {
+        app.send(Intent::SetSetting { target: Target::Preset(preset), key: sp.key.into(), value: choices[i].key.into() });
     }
 }

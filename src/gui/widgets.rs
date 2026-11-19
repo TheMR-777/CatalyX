@@ -429,6 +429,19 @@ enum Caption {
     Close,
 }
 
+impl Caption {
+    /// The one window command this button stands for. Kept in one place, and tested, because a
+    /// wrong boolean here is invisible until someone clicks the title bar.
+    fn command(self, maximized: bool) -> egui::ViewportCommand {
+        match self {
+            Caption::Minimize => egui::ViewportCommand::Minimized(true),
+            Caption::Maximize => egui::ViewportCommand::Maximized(!maximized),
+            Caption::Restore => egui::ViewportCommand::Maximized(!maximized),
+            Caption::Close => egui::ViewportCommand::Close,
+        }
+    }
+}
+
 /// Minimize, maximize/restore and close for a right-to-left layout (close ends up rightmost).
 pub fn window_buttons(ui: &mut Ui, height: f32) {
     let ctx = ui.ctx().clone();
@@ -437,14 +450,14 @@ pub fn window_buttons(ui: &mut Ui, height: f32) {
     let inside = ctx.content_rect().shrink(resize_band(&ctx));
     let clicked = |r: Response| r.clicked() && r.interact_pointer_pos().is_none_or(|p| inside.contains(p));
     if clicked(caption_button(ui, Caption::Close, height)) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        ctx.send_viewport_cmd(Caption::Close.command(maximized));
     }
     let mid = if maximized { Caption::Restore } else { Caption::Maximize };
     if clicked(caption_button(ui, mid, height)) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        ctx.send_viewport_cmd(mid.command(maximized));
     }
     if clicked(caption_button(ui, Caption::Minimize, height)) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        ctx.send_viewport_cmd(Caption::Minimize.command(maximized));
     }
 }
 
@@ -553,5 +566,21 @@ pub fn window_edges(ctx: &egui::Context) {
         if ctx.input(|i| i.pointer.primary_pressed()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Caption;
+    use egui::ViewportCommand;
+
+    #[test]
+    fn the_caption_buttons_send_the_right_window_commands() {
+        assert_eq!(Caption::Minimize.command(false), ViewportCommand::Minimized(true));
+        assert_eq!(Caption::Maximize.command(false), ViewportCommand::Maximized(true));
+        assert_eq!(Caption::Maximize.command(true), ViewportCommand::Maximized(false), "maximize flips a restored window");
+        assert_eq!(Caption::Restore.command(true), ViewportCommand::Maximized(false));
+        assert_eq!(Caption::Close.command(false), ViewportCommand::Close);
+        assert_eq!(Caption::Close.command(true), ViewportCommand::Close, "close never depends on the layout");
     }
 }

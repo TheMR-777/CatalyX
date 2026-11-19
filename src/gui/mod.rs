@@ -55,11 +55,9 @@ pub const TABS: [(Tab, &str, &str, Ico); 7] = [
     (Tab::Settings, "Settings", "Behaviour and look", Ico::Gear),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EditTarget {
-    Preset(usize),
-    Game(usize),
-}
+/// Which preset or game-with-own-settings a page edits. The core's target type, so this page state
+/// and `Intent::SetSetting` cannot drift apart.
+pub type EditTarget = crate::app::Target;
 
 #[derive(Clone, Copy)]
 pub enum PickFor {
@@ -110,6 +108,9 @@ pub struct CatalyxApp {
     /// What the core was last told this window shows, and whether it is minimised.
     last_interest: Interest,
     last_minimised: bool,
+    /// The core said it is safe to close (`Event::ReadyToClose`/`ReadyToQuit`). Until then a close
+    /// request is held back while a boost is put back.
+    may_close: bool,
     // checks
     pub drawn: HashSet<&'static str>,
     selftest: Option<crate::selftest::SelfTest>,
@@ -177,6 +178,7 @@ impl CatalyxApp {
             reveal_step: if check_run { 2 } else { 0 },
             last_interest: Interest::default(),
             last_minimised: false,
+            may_close: false,
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
@@ -254,8 +256,14 @@ impl CatalyxApp {
                     self.boost_dont_ask = false;
                     self.confirm = Some(pages::Confirm::Boost { idx: game, plan });
                 }
-                Event::ReadyToClose => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                Event::ReadyToQuit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Event::ReadyToClose => {
+                    self.may_close = true;
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                Event::ReadyToQuit => {
+                    self.may_close = true;
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
     }
@@ -342,6 +350,13 @@ impl CatalyxApp {
     }
 }
 
+/// Whether this frame's close request is held back while the core saves or puts a boost back.
+/// Once the core is ready, the close must go through: eframe cancels any close in a frame that also
+/// sends `CancelClose`, so cancelling after `ReadyToClose` would ask itself to close forever.
+fn cancel_close(requested: bool, may_close: bool) -> bool {
+    requested && !may_close
+}
+
 fn save_png(path: &str, img: &egui::ColorImage) {
     if let Some(dir) = std::path::Path::new(path).parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -388,10 +403,15 @@ impl eframe::App for CatalyxApp {
         }
         self.v = self.core.view();
         // The core answers a close request: the window stays up while a boost is put back, then
-        // Event::ReadyToClose closes it.
-        if ctx.input(|i| i.viewport().close_requested()) {
+        // Event::ReadyToClose lets it through. eframe cancels a close whenever CancelClose appears
+        // in the same frame's commands, so never cancel after the core is ready: that is how the
+        // window used to ask itself to close forever.
+        let close_requested = ctx.input(|i| i.viewport().close_requested());
+        if cancel_close(close_requested, self.may_close) {
+            self.hint(Hint::CloseRequested);
+        }
+        if cancel_close(close_requested, self.may_close) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.core.hint(Hint::CloseRequested);
         }
         self.drain_events();
         // Dropped files become games.
@@ -484,4 +504,17 @@ pub fn run(opts: Options) -> Result<(), String> {
 
 fn app_icon() -> egui::IconData {
     mark::icon_data()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cancel_close;
+
+    #[test]
+    fn a_close_is_only_held_back_until_the_core_is_ready() {
+        assert!(!cancel_close(false, false), "nothing to answer");
+        assert!(!cancel_close(false, true), "already allowed: let it through");
+        assert!(cancel_close(true, false), "a boost is being put back");
+        assert!(!cancel_close(true, true), "the core said safe: never cancel now");
+    }
 }

@@ -2,6 +2,7 @@
 //! the skin tells the core about itself (`Hint`). See docs/SKINS.md for the contract.
 
 use super::boost::Plan;
+use super::spec::Target;
 use crate::config::{Config, CpuLevel};
 
 /// Every change a person can ask for. Games are still referred to by list index here; ids come with T5.
@@ -66,6 +67,18 @@ pub enum Intent {
     },
     ExportConfig(String),
     ImportConfig(String),
+    /// Change one profile setting by its catalogue key and CLI value (`app/spec.rs`). A preset, or a
+    /// game that already has its own settings; the core ignores a target that is gone.
+    SetSetting {
+        target: Target,
+        key: String,
+        value: String,
+    },
+    /// Change one app option by its catalogue key and on/off value.
+    SetOption {
+        key: String,
+        value: String,
+    },
     /// TRANSITIONAL (Phase 1a T2a, removed in T5): a page edits the config directly. Applied at once,
     /// marks the config for saving.
     Edit(Box<dyn FnOnce(&mut Config) + Send>),

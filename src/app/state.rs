@@ -4,6 +4,7 @@
 use super::boost::{self, BoostView};
 use super::intent::{Event, Hint, Intent, Interest, Tone};
 use super::jobs::{Done, Job};
+use super::spec::{self, Target};
 use super::view::{Hardware, Library, System, View};
 use crate::config::{Config, Game, ProcAction};
 use crate::engine::{BoostRequest, Cmd, Phase, SharedStatus, Status};
@@ -353,6 +354,14 @@ impl State {
             Intent::CreateBoostPlan { level } => self.create_boost_plan(level),
             Intent::ExportConfig(path) => self.export_config(&path),
             Intent::ImportConfig(path) => self.import_config(&path),
+            Intent::SetSetting { target, key, value } => self.set_setting(target, &key, &value),
+            Intent::SetOption { key, value } => {
+                // A bad key or value changes nothing; the catalogue is the only judge.
+                let cfg = self.cfg_mut();
+                if spec::set_option(cfg, &key, &value).is_ok() {
+                    self.mark_dirty();
+                }
+            }
             Intent::Edit(f) => {
                 f(self.cfg_mut());
                 // The library may have shrunk, or the index may be stale: keep every reader safe.
@@ -360,6 +369,38 @@ impl State {
                 self.mark_dirty();
             }
         }
+    }
+
+    /// Changes one setting through the catalogue. Works on a copy first so a stale target or an
+    /// unknown key leaves the config, its revision and its save timer untouched.
+    fn set_setting(&mut self, target: Target, key: &str, value: &str) {
+        let mut s = match target {
+            Target::Preset(i) => match self.cfg.presets.get(i) {
+                Some(p) => p.settings.clone(),
+                None => return,
+            },
+            Target::Game(i) => match self.cfg.games.get(i).and_then(|g| g.custom.clone()) {
+                Some(s) => s,
+                None => return,
+            },
+        };
+        if spec::set(&mut s, key, value).is_err() {
+            return;
+        }
+        let cfg = self.cfg_mut();
+        match target {
+            Target::Preset(i) => {
+                if let Some(p) = cfg.presets.get_mut(i) {
+                    p.settings = s;
+                }
+            }
+            Target::Game(i) => {
+                if let Some(g) = cfg.games.get_mut(i) {
+                    g.custom = Some(s);
+                }
+            }
+        }
+        self.mark_dirty();
     }
 
     /// Starting a boost: first the summary of what will change (unless the person turned that off).

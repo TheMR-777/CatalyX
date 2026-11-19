@@ -163,20 +163,12 @@ impl Cli {
     pub(super) fn option(&self) -> Result<(), String> {
         let mut cfg = Config::load();
         let name = self.arg(1, "option name")?.to_lowercase();
+        // Parse the value first, then look the name up: the old command reported a bad value first.
         let on = parse_on(&self.arg(2, "on or off")?)?;
-        match name.as_str() {
-            "restore-on-exit" => cfg.restore_when_game_closes = on,
-            "reopen-apps" => cfg.reopen_closed_apps = on,
-            "keep-off" => cfg.keep_apps_off = on,
-            "auto-boost" => cfg.auto_boost_known_games = on,
-            "run-as-admin" => cfg.run_as_admin = on,
-            "confirm-boost" => cfg.confirm_boost = on,
-            o => {
-                return Err(format!(
-                    "unknown option '{o}' (restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin, confirm-boost)"
-                ))
-            }
-        }
+        let Some(spec) = spec::option(&name) else {
+            return Err(format!("unknown option '{name}' ({})", spec::option_keys()));
+        };
+        spec.set(&mut cfg, on);
         cfg.save();
         println!("{name}: {}", if on { "on" } else { "off" });
         Ok(())

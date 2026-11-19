@@ -1,6 +1,9 @@
-//! The text `catalyx help` prints.
+//! The text `catalyx help` prints. The option names and the KEYS block come from the settings
+//! catalogue (`app/spec.rs`), so a new setting or option appears here as soon as it is listed.
 
-pub(super) const HELP: &str = "\
+use crate::app::spec;
+
+const BEFORE_OPTIONS: &str = "\
 CatalyX - a lean game booster. Run without arguments to open the window.
 
 USAGE
@@ -44,18 +47,43 @@ SYSTEM
   plan <name|guid>                       Switch power plan now
   gpu                                    Graphics card, offsets and safe steps
   theme [focus|slate|mica] [dark|light|system] [accent] [tint-off|tint-subtle|tint-rich] [bar|gauge|ring]
-  option <name> <on|off>                 restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin, confirm-boost
-  heat-limit <75|80|83|87>               GPU temperature that undoes the overclock
+";
+
+const AFTER_OPTIONS: &str = "  heat-limit <75|80|83|87>               GPU temperature that undoes the overclock
   elevate setup|remove|status            One-click administrator start (one Windows prompt, once)
   autostart on|off|status                Background watcher: boosts your games without a window
   watch [--quiet]                        Run the watcher now in this terminal
   config path | export <file> | import <file> | reset
   gui | version | help
 
-KEYS for `set`
-  priority normal|above|high             power keep|high|catalyx   gpu off|safe|balanced
-  cpu off|boost|max                      apps services clean-ram game-mode dvr-off notifications-off transparency-off
-  maintenance-off mmcss no-throttling lower-others io-boost purge-standby quiet-desktop   (on|off)
-
-Games and presets can be given by name (any unique part), id or number from `games`.
 ";
+
+/// The full help text as one string (the option list and the KEYS block are generated).
+pub(super) fn text() -> String {
+    format!(
+        "{BEFORE_OPTIONS}  {:<39}{}\n{AFTER_OPTIONS}KEYS for `set`\n{}\nGames and presets can be given by name (any unique part), id or number from `games`.\n",
+        "option <name> <on|off>",
+        spec::option_keys(),
+        spec::keys_help()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_generated_help_keeps_the_old_lines_and_columns() {
+        let t = text();
+        assert!(t.contains(
+            "  option <name> <on|off>                 restore-on-exit, reopen-apps, keep-off, auto-boost, run-as-admin, confirm-boost\n"
+        ));
+        assert!(t.contains("KEYS for `set`\n  priority normal|above|high             power keep|high|catalyx   gpu off|safe|balanced\n"));
+        assert!(t.contains("  heat-limit <75|80|83|87>               GPU temperature that undoes the overclock\n"));
+        assert!(t.contains(
+            "  cpu off|boost|max                      apps services clean-ram game-mode dvr-off notifications-off transparency-off\n"
+        ));
+        assert!(t.contains("  maintenance-off mmcss no-throttling lower-others io-boost purge-standby quiet-desktop   (on|off)\n"));
+        assert!(t.ends_with("Games and presets can be given by name (any unique part), id or number from `games`.\n"));
+    }
+}

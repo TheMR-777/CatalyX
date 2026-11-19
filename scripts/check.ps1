@@ -9,6 +9,7 @@
   6. the version in Cargo.toml is the version the program reports
   7. (full run) the window's end-to-end self-test: starts a stand-in game, boosts, restores
   8. (full run) the window starts, draws and is shown, within a time limit
+  9. (full run) the window closes when Windows asks it to (the taskbar's Close)
 
   Exits 0 when everything passed, 1 otherwise, with a table of results. Never touches your real settings
   (checks use scratch data). Needs a Windows desktop session for steps 7 and 8.
@@ -94,6 +95,27 @@ if (-not $Quick) {
     if (-not $shown) { throw 'the window was never shown' }
     if ($shown -gt 2500) { throw "the window took $shown ms to be shown (limit 2500)" }
     "window shown after $shown ms"
+  }
+
+  Step 'close (taskbar request)' {
+    $env:CATALYX_DATA = Join-Path $env:TEMP 'catalyx-check-close'; New-Item -ItemType Directory -Force $env:CATALYX_DATA | Out-Null
+    $env:CATALYX_TRACE = '1'; $trace = Join-Path $env:TEMP 'catalyx-startup.txt'; Remove-Item $trace -ErrorAction SilentlyContinue
+    $p = Start-Process $win -ArgumentList '--no-elevate' -PassThru
+    try {
+      # A close sent before the window is shown is swallowed by the OS; wait for the real thing.
+      $shown = $false
+      for ($i = 0; $i -lt 100 -and -not $shown; $i++) {
+        Start-Sleep -Milliseconds 100
+        if (Test-Path $trace) { $shown = [bool](Select-String -Path $trace -Pattern '^\s*[\d.]+ ms\s+window shown' | Select-Object -First 1) }
+      }
+      if (-not $shown) { throw 'the window was never shown' }
+      if (-not $p.CloseMainWindow()) { throw 'Windows would not send the close request' }
+      if (-not $p.WaitForExit(8000)) { throw 'the window ignored the close request' }
+      'closed on request'
+    } finally {
+      if (-not $p.HasExited) { $p.Kill() }
+      Remove-Item Env:CATALYX_TRACE, Env:CATALYX_DATA -ErrorAction SilentlyContinue
+    }
   }
 }
 

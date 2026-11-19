@@ -2,11 +2,6 @@
 
 use super::*;
 
-pub(super) enum Target {
-    Game(usize),
-    Preset(usize),
-}
-
 pub(super) fn trunc(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
@@ -51,17 +46,5 @@ pub(super) fn find_preset(cfg: &Config, q: &str) -> Result<usize, String> {
 }
 
 pub(super) fn parse_on(v: &str) -> Result<bool, String> {
-    match v.to_lowercase().as_str() {
-        "on" | "yes" | "true" | "1" => Ok(true),
-        "off" | "no" | "false" | "0" => Ok(false),
-        o => Err(format!("expected on or off, got '{o}'")),
-    }
-}
-
-pub(super) fn onoff(b: bool) -> String {
-    if b {
-        "on".into()
-    } else {
-        "off".into()
-    }
+    crate::app::spec::parse_on(v)
 }

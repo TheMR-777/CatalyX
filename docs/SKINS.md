@@ -190,13 +190,14 @@ often; a job result or an event is shown at once.
 
 ### The settings catalogue
 
-One `&'static` table in the core describes every core setting once with the same `Spec` type skins use: key (as the
-CLI types it), label, hint line, group, whether it needs administrator rights, and its kind. The CLI's
-`describe`/`set` and its help text, the plan lines and any skin's settings form all read it, so a new setting
-appears everywhere at once (today a setting is described in up to five places). Contents: the 18 `Settings` fields
-(game priority, power plan, CPU performance, graphics card tuning, disk and memory priority, app rules, services,
-lower everything else, free memory, flush cached memory, Game Mode, background recording, notifications, efficiency
-mode, maintenance, transparency, multimedia scheduler, quiet desktop) and the app options listed under Options.
+One `&'static` table in the core (`src/app/spec.rs` today) describes every core setting once with the same `Spec`
+type skins use: key (as the CLI types it), label, hint line, group, whether it needs administrator rights, and its
+kind. The CLI's `describe`/`set` and its help text, and the classic skin's Profiles form all read it, so a new
+setting appears everywhere at once. Contents: the 18 `Settings` fields (game priority, power plan, CPU performance,
+graphics card tuning, disk and memory priority, app rules, services, lower everything else, free memory, flush cached
+memory, Game Mode, background recording, notifications, efficiency mode, maintenance, transparency, multimedia
+scheduler, quiet desktop) and the six app options (restore on exit, reopen apps, keep off, auto-boost, run as
+administrator, ask before boosting).
 
 ### Window helpers
 

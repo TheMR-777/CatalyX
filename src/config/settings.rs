@@ -15,7 +15,8 @@ pub enum Priority {
 
 impl Priority {
     pub const ALL: [Priority; 3] = [Priority::Normal, Priority::AboveNormal, Priority::High];
-    pub fn hint(self) -> &'static str {
+    // `const` so the settings catalogue can hold these labels in its static table.
+    pub const fn hint(self) -> &'static str {
         match self {
             Priority::Normal => "Windows default",
             Priority::AboveNormal => "Helps on busy PCs",
@@ -23,7 +24,7 @@ impl Priority {
             Priority::Realtime => "Can freeze mouse and sound",
         }
     }
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Priority::Normal => "Normal",
             Priority::AboveNormal => "Above normal",
@@ -42,14 +43,14 @@ pub enum PowerChoice {
 
 impl PowerChoice {
     pub const ALL: [PowerChoice; 3] = [PowerChoice::Keep, PowerChoice::HighPerformance, PowerChoice::BoostPlan];
-    pub fn hint(self) -> &'static str {
+    pub const fn hint(self) -> &'static str {
         match self {
             PowerChoice::Keep => "Leave the power plan alone",
             PowerChoice::HighPerformance => "The built-in Windows plan",
             PowerChoice::BoostPlan => "Turbo held high, cores never parked",
         }
     }
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             PowerChoice::Keep => "Keep current plan",
             PowerChoice::HighPerformance => "High performance",
@@ -67,14 +68,14 @@ pub enum GpuLevel {
 
 impl GpuLevel {
     pub const ALL: [GpuLevel; 3] = [GpuLevel::Off, GpuLevel::Safe, GpuLevel::Balanced];
-    pub fn hint(self) -> &'static str {
+    pub const fn hint(self) -> &'static str {
         match self {
             GpuLevel::Off => "Clocks untouched",
             GpuLevel::Safe => "Half a step: well inside what the driver allows",
             GpuLevel::Balanced => "A full step (never more than 150 MHz)",
         }
     }
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             GpuLevel::Off => "Off",
             GpuLevel::Safe => "Safe (half step)",
@@ -96,14 +97,14 @@ pub enum CpuLevel {
 
 impl CpuLevel {
     pub const ALL: [CpuLevel; 3] = [CpuLevel::Off, CpuLevel::Boost, CpuLevel::Max];
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             CpuLevel::Off => "Off",
             CpuLevel::Boost => "Boost",
             CpuLevel::Max => "Max sustained",
         }
     }
-    pub fn hint(self) -> &'static str {
+    pub const fn hint(self) -> &'static str {
         match self {
             CpuLevel::Off => "Leave the processor's power settings alone",
             CpuLevel::Boost => "Turbo on, 100% minimum, cores never parked",

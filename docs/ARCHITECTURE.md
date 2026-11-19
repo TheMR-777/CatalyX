@@ -9,7 +9,7 @@ src/
   main.rs            front-end 1: catalyx.exe, a window program (no console, never a terminal)
   bin/catalyx-cli.rs front-end 2: catalyx-cli.exe, the same program as a console program (scripts, pipes, agents)
   trace.rs           optional start-up timing (CATALYX_TRACE=1)
-  app/               the core behind the window: state, intents, view, boost description, jobs, upkeep
+  app/               the core behind the window: state, intents, view, settings catalogue, boost description, jobs, upkeep
   cli/               every command (mod = parsing + dispatch; one file per area)
   engine/            the boost engine (own thread): the heart of the program
   config/            settings, presets, the app/service lists, the saved config file
