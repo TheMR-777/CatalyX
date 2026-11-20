@@ -26,11 +26,11 @@ impl Engine {
             s.quiet_tried = true;
         }
         if !shell::running() {
-            self.log("Windows' desktop was not running, so there was nothing to switch off");
+            self.log(Tags::DESKTOP, "Windows' desktop was not running, so there was nothing to switch off");
             return;
         }
         if let Err(e) = shell::hotkey_start() {
-            self.log(format!("Windows' desktop left on: {e}"));
+            self.log(Tags::DESKTOP.and(Tags::WARN), format!("Windows' desktop left on: {e}"));
             return;
         }
         // Journal first (it brings the desktop back after a crash), then the guard, then the change.
@@ -41,14 +41,14 @@ impl Engine {
         shell::spawn_guard();
         match shell::stop() {
             Ok(()) => {
-                self.log(format!("Windows' desktop switched off for the game; {} brings it back", shell::EXIT_KEYS));
+                self.log(Tags::DESKTOP, format!("Windows' desktop switched off for the game; {} brings it back", shell::EXIT_KEYS));
                 if let Ok(mut st) = self.status.lock() {
                     st.quiet_desktop = true;
                 }
                 self.counts(|c| c.quiet_desktop = true);
             }
             Err(e) => {
-                self.log(format!("Windows' desktop left on: {e}"));
+                self.log(Tags::DESKTOP.and(Tags::WARN), format!("Windows' desktop left on: {e}"));
                 if !shell::running() {
                     let _ = shell::start();
                 }
@@ -66,14 +66,14 @@ impl Engine {
         }
         match shell::start() {
             Ok(how) => {
-                self.log(format!("Windows' desktop is back ({why}; started {how}); the boost keeps running"));
+                self.log(Tags::DESKTOP, format!("Windows' desktop is back ({why}; started {how}); the boost keeps running"));
                 self.forget_undos(|u| matches!(u, Undo::Shell));
                 shell::hotkey_stop();
                 if let Ok(mut st) = self.status.lock() {
                     st.quiet_desktop = false;
                 }
             }
-            Err(e) => self.log(format!("Windows' desktop could not be started: {e}")),
+            Err(e) => self.log(Tags::DESKTOP.and(Tags::ERROR), format!("Windows' desktop could not be started: {e}")),
         }
     }
 }

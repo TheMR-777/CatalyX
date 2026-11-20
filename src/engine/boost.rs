@@ -25,15 +25,18 @@ impl Engine {
         if req.attach_pid.is_none() {
             if let Some(g) = &req.game {
                 if !g.launch.contains("://") && !std::path::Path::new(&g.launch).is_file() && !dry {
-                    self.log(format!("Could not start the game: file not found: {}", g.launch));
+                    self.log(Tags::GAME.and(Tags::ERROR), format!("Could not start the game: file not found: {}", g.launch));
                     self.set_phase(Phase::Idle);
                     return;
                 }
             }
         }
-        self.log(if game_name.is_empty() { "Switching to gaming mode".to_string() } else { format!("Boosting for {game_name}") });
+        self.log(
+            Tags::GAME,
+            if game_name.is_empty() { "Switching to gaming mode".to_string() } else { format!("Boosting for {game_name}") },
+        );
         if dry {
-            self.log("Test run: nothing on this PC is changed");
+            self.log(Tags::GAME, "Test run: nothing on this PC is changed");
         }
         let started = procs::now_secs();
         self.session = Some(Session {
@@ -88,20 +91,23 @@ impl Engine {
         }
         if s.purge_standby {
             if self.dry() {
-                self.log("Would empty cached standby pages (Max Squeeze only)");
+                self.log(Tags::MEMORY, "Would empty cached standby pages (Max Squeeze only)");
                 self.counts(|c| c.planned += 1);
             } else if procs::purge_standby() {
-                self.log("Emptied the Windows standby cache; Windows will rebuild it as needed");
+                self.log(Tags::MEMORY, "Emptied the Windows standby cache; Windows will rebuild it as needed");
                 self.counts(|c| c.standby_purged = true);
             } else {
-                self.log("Standby cache untouched: Windows refused or administrator rights are needed");
+                self.log(Tags::MEMORY.and(Tags::ERROR), "Standby cache untouched: Windows refused or administrator rights are needed");
             }
         }
         if s.gpu != GpuLevel::Off {
             self.apply_gpu(s.gpu);
         }
         if s.quiet_desktop && dry && req.game.is_some() && req.attach_pid.is_none() {
-            self.log(format!("Would switch Windows' desktop off once the game is found ({} brings it back)", shell::EXIT_KEYS));
+            self.log(
+                Tags::DESKTOP,
+                format!("Would switch Windows' desktop off once the game is found ({} brings it back)", shell::EXIT_KEYS),
+            );
             self.counts(|c| c.planned += 1);
         }
 
@@ -114,17 +120,17 @@ impl Engine {
         } else if let Some(g) = &req.game {
             if self.dry() && g.id != "selftest" {
                 // A test run must never start the person's real game.
-                self.log(format!("Would start {} and look for its real program", g.name));
+                self.log(Tags::GAME, format!("Would start {} and look for its real program", g.name));
                 self.counts(|c| c.planned += 1);
                 self.set_phase(Phase::Boosted);
-                self.log("Boost applied");
+                self.log(Tags::GAME, "Boost applied");
                 return;
             }
-            self.log(format!("Starting {}", g.name));
+            self.log(Tags::GAME, format!("Starting {}", g.name));
             match launcher::launch(&g.launch, &g.args, self.dry() || g.id == "selftest") {
                 Ok((pid, plan)) => {
                     if !plan.hints.is_empty() {
-                        self.log(format!("Launcher mentions: {}", plan.hints.join(", ")));
+                        self.log(Tags::GAME, format!("Launcher mentions: {}", plan.hints.join(", ")));
                     }
                     if let Some(sess) = &mut self.session {
                         sess.root_pid = pid;
@@ -136,7 +142,7 @@ impl Engine {
                     self.set_phase(Phase::Finding);
                 }
                 Err(e) => {
-                    self.log(format!("Could not start the game: {e}"));
+                    self.log(Tags::GAME.and(Tags::ERROR), format!("Could not start the game: {e}"));
                     self.restore();
                     return;
                 }
@@ -144,6 +150,6 @@ impl Engine {
         } else {
             self.set_phase(Phase::Boosted);
         }
-        self.log("Boost applied");
+        self.log(Tags::GAME, "Boost applied");
     }
 }

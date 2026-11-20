@@ -7,7 +7,7 @@ use super::jobs::{Done, Job};
 use super::spec::{self, Target};
 use super::view::{Hardware, Library, System, View};
 use crate::config::{Config, Game, Preset, ProcAction};
-use crate::engine::{BoostRequest, Cmd, Phase, SharedStatus, Status};
+use crate::engine::{BoostRequest, Cmd, LogLine, Phase, SharedStatus, Status, Tags};
 use crate::procs::{self, SharedSnapshot, Snapshot};
 use crate::services;
 use crate::{elevate, ffi};
@@ -929,20 +929,21 @@ pub(super) fn demo_session(status: &SharedStatus) {
         st.counts.cpu_level = "Boost".into();
         st.counts.game_priority = true;
         st.counts.io_boost = true;
+        // The same lines a real boost writes, with the same tags: the picture is the truth.
         st.log = [
-            "Boosting for Stellar Drift",
-            "Power plan: CatalyX plan, CPU Boost (checked: turbo aggressive, cores unparked)",
-            "Windows: Game Mode on",
-            "Stopped service Connected User Experiences and Telemetry",
-            "Freed 640 MB of memory from 32 apps",
-            "Starting Stellar Drift",
-            "Found the game: stellardrift-win64.exe (pid 4242)",
-            "Game priority: Above normal",
-            "Game disk I/O priority: High (checked with Windows)",
-            "Windows efficiency mode kept off for the game",
+            (Tags::GAME, "Boosting for Stellar Drift"),
+            (Tags::POWER.and(Tags::OK), "Power plan: CatalyX plan, CPU Boost (checked: turbo aggressive, cores unparked)"),
+            (Tags::WINDOWS, "Windows: Game Mode on"),
+            (Tags::SERVICES, "Stopped service Connected User Experiences and Telemetry"),
+            (Tags::MEMORY, "Freed 640 MB of memory from 32 apps"),
+            (Tags::GAME, "Starting Stellar Drift"),
+            (Tags::GAME.and(Tags::OK), "Found the game: stellardrift-win64.exe (pid 4242)"),
+            (Tags::GAME.and(Tags::OK), "Game priority: Above normal"),
+            (Tags::GAME.and(Tags::OK), "Game disk I/O priority: High (checked with Windows)"),
+            (Tags::GAME, "Windows efficiency mode kept off for the game"),
         ]
-        .iter()
-        .map(|s| s.to_string())
+        .into_iter()
+        .map(|(tags, text)| LogLine::new(tags, text))
         .collect();
     }
 }

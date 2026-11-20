@@ -3,10 +3,9 @@
 //! boosting.
 
 use crate::app::{power_summary, Intent, NoticeKind};
-use crate::engine::{Phase, Status};
+use crate::engine::{Phase, Status, Tags};
 use crate::gui::control;
 use crate::gui::icons::{self, Ico};
-use crate::gui::theme::Palette;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget, Tab};
 use crate::procs;
@@ -372,23 +371,19 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
         ScrollArea::vertical().id_salt("activity").max_height(240.0).stick_to_bottom(true).auto_shrink([false, true]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             for line in &st.log {
-                ui.label(RichText::new(line).size(12.0).color(log_color(&p, line)));
+                let tone = if line.tags.has(Tags::ERROR) {
+                    p.danger
+                } else if line.tags.has(Tags::WARN) {
+                    p.warn
+                } else if line.tags.has(Tags::OK) {
+                    p.ok
+                } else {
+                    p.dim
+                };
+                ui.label(RichText::new(&line.text).size(12.0).color(tone));
             }
         });
     });
-}
-
-fn log_color(p: &Palette, line: &str) -> egui::Color32 {
-    let l = line.to_lowercase();
-    if l.contains("could not") || l.contains("failed") || l.contains("refused") || l.contains("blocked") {
-        p.danger
-    } else if l.contains("needs administrator") || l.contains("skipped") || l.contains("unchanged") {
-        p.warn
-    } else if l.starts_with("found the game") || l.contains("game priority:") || l.contains("checked") {
-        p.ok
-    } else {
-        p.dim
-    }
 }
 
 fn ghz_short(mhz: u32) -> String {

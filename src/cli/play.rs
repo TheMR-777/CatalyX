@@ -184,11 +184,11 @@ impl Cli {
                     println!("  {line}");
                 }
                 if let Some(message) = st.log.iter().find(|line| {
-                    line.starts_with("Could not start the game:")
-                        || line.starts_with("Another CatalyX window")
-                        || line.starts_with("Could not reserve a safe boost")
+                    line.text.starts_with("Could not start the game:")
+                        || line.text.starts_with("Another CatalyX window")
+                        || line.text.starts_with("Could not reserve a safe boost")
                 }) {
-                    return Err(message.clone());
+                    return Err(message.text.clone());
                 }
                 if st.pending_journal {
                     return Err("some changes could not be restored; run `catalyx restore`".into());

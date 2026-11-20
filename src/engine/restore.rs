@@ -29,7 +29,10 @@ impl Engine {
                     // ever, so it is dropped with a note.
                     let out = services::undo_stop(name);
                     if let Some(note) = &out.note {
-                        self.log(format!("Service {name}: {note}"));
+                        // The note is the reason: "nothing to restore" reads as news, a failed
+                        // start as a failure. The outcome decides the tone, not the words.
+                        let tone = if out.done { Tags::SERVICES } else { Tags::SERVICES.and(Tags::ERROR) };
+                        self.log(tone, format!("Service {name}: {note}"));
                     }
                     out.done
                 }
@@ -44,14 +47,14 @@ impl Engine {
                     shell::hotkey_stop();
                     match shell::start() {
                         Ok(how) => {
-                            self.log(format!("Windows' desktop is back (started {how})"));
+                            self.log(Tags::DESKTOP, format!("Windows' desktop is back (started {how})"));
                             if let Ok(mut st) = self.status.lock() {
                                 st.quiet_desktop = false;
                             }
                             true
                         }
                         Err(e) => {
-                            self.log(format!("Windows' desktop could not be started: {e}"));
+                            self.log(Tags::DESKTOP.and(Tags::ERROR), format!("Windows' desktop could not be started: {e}"));
                             false
                         }
                     }
@@ -66,14 +69,17 @@ impl Engine {
                         let dir = path.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
                         match crate::ffi::shell_start(exe, "", &dir, false) {
                             Ok(_) => {
-                                self.log(format!(
-                                    "Reopened {}",
-                                    path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or(exe.clone())
-                                ));
+                                self.log(
+                                    Tags::RESTORE,
+                                    format!(
+                                        "Reopened {}",
+                                        path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or(exe.clone())
+                                    ),
+                                );
                                 true
                             }
                             Err(e) => {
-                                self.log(format!("Could not reopen {exe}: {e}"));
+                                self.log(Tags::RESTORE.and(Tags::ERROR), format!("Could not reopen {exe}: {e}"));
                                 false
                             }
                         }
@@ -83,7 +89,7 @@ impl Engine {
             if ok {
                 n += 1;
             } else {
-                self.log(format!("Could not undo {u:?}; kept for a later Restore"));
+                self.log(Tags::RESTORE.and(Tags::ERROR), format!("Could not undo {u:?}; kept for a later Restore"));
                 remaining.push(u);
             }
         }
@@ -96,14 +102,14 @@ impl Engine {
         if remaining.is_empty() {
             if let Err(e) = std::fs::remove_file(journal_path()) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    self.log(format!("Recovery journal could not be removed: {e}"));
+                    self.log(Tags::RESTORE.and(Tags::ERROR), format!("Recovery journal could not be removed: {e}"));
                 }
             }
         } else if let Err(e) = persist_journal(&remaining) {
-            self.log(format!("Recovery journal could not be updated: {e}; the original is kept"));
+            self.log(Tags::RESTORE.and(Tags::ERROR), format!("Recovery journal could not be updated: {e}; the original is kept"));
         }
         let pending = journal_path().exists();
-        self.log(format!("{label} ({n} changes undone{})", if pending { "; some still need restoring" } else { "" }));
+        self.log(Tags::RESTORE, format!("{label} ({n} changes undone{})", if pending { "; some still need restoring" } else { "" }));
         if let Ok(mut st) = self.status.lock() {
             st.phase = Phase::Idle;
             st.game_pid = 0;
@@ -122,11 +128,11 @@ impl Engine {
     /// Undo a boost left over from a crash or power cut; never erase an unreadable record.
     pub(super) fn restore_journal(&mut self) {
         let Ok(text) = std::fs::read_to_string(journal_path()) else {
-            self.log("Nothing to restore");
+            self.log(Tags::RESTORE, "Nothing to restore");
             return;
         };
         let Ok(list) = serde_json::from_str::<Vec<Undo>>(&text) else {
-            self.log("Recovery journal is unreadable; kept it intact for manual recovery");
+            self.log(Tags::RESTORE, "Recovery journal is unreadable; kept it intact for manual recovery");
             return;
         };
         self.set_phase(Phase::Restoring);

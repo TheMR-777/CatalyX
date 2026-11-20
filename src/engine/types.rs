@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LockResult, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use super::journal::journal_path;
+use super::log::LogLine;
 
 #[derive(Clone, Debug)]
 pub struct BoostRequest {
@@ -97,7 +98,7 @@ pub struct Status {
     pub game_id: String,
     pub game_pid: u32,
     pub game_exe: String,
-    pub log: Vec<String>,
+    pub log: Vec<LogLine>,
     pub counts: Counts,
     /// (game id, real program name) found behind a launcher; the UI saves it to the profile.
     pub learned: Option<(String, String)>,
@@ -262,6 +263,7 @@ pub enum Undo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Tags;
     use std::sync::atomic::AtomicUsize;
 
     fn counted_cell() -> (Arc<StatusCell>, Arc<AtomicUsize>) {
@@ -300,7 +302,7 @@ mod tests {
         let (cell, calls) = counted_cell();
         if let Ok(mut st) = cell.lock() {
             st.phase = Phase::Running;
-            st.log.push("one".into());
+            st.log.push(LogLine::new(Tags::SERVICES, "one"));
         }
         assert_eq!(cell.rev(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);

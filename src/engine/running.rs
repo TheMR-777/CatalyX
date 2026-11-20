@@ -88,7 +88,7 @@ impl Engine {
                         st.learned = Some((gid, p.name.clone()));
                     }
                 }
-                self.log(format!("Found the game: {} (pid {})", p.name, p.pid));
+                self.log(Tags::GAME.and(Tags::OK), format!("Found the game: {} (pid {})", p.name, p.pid));
                 self.boost_game_process(p.pid, &settings, dry);
                 return;
             }
@@ -98,7 +98,7 @@ impl Engine {
                 if lost.elapsed() > Duration::from_secs(8) {
                     let restore = sess.req.restore_when_game_closes;
                     sess.game_pid = 0;
-                    self.log("The game has closed");
+                    self.log(Tags::GAME, "The game has closed");
                     if restore {
                         self.restore();
                         return;
@@ -123,11 +123,11 @@ impl Engine {
             } else if sess.game_pid == 0 && elapsed > Duration::from_secs(240) {
                 let restore = sess.req.restore_when_game_closes;
                 if restore {
-                    self.log("The game was not found within 4 minutes - everything is being put back. Set its program in Games if it keeps happening.");
+                    self.log(Tags::GAME, "The game was not found within 4 minutes - everything is being put back. Set its program in Games if it keeps happening.");
                     self.restore();
                     return;
                 }
-                self.log("The game was not found within 4 minutes; staying in gaming mode");
+                self.log(Tags::GAME, "The game was not found within 4 minutes; staying in gaming mode");
                 self.set_phase(Phase::Boosted);
                 if let Some(s) = &mut self.session {
                     s.req.game = None;
@@ -155,7 +155,7 @@ impl Engine {
             let list = services::list();
             for s in list.iter().filter(|s| s.running && svcs.contains(&s.name)) {
                 if !services::failed_today(&s.name) && services::stop_with_timeout(&s.name).is_ok() {
-                    self.log(format!("Stopped service {} again", s.display));
+                    self.log(Tags::SERVICES, format!("Stopped service {} again", s.display));
                 }
             }
         }
@@ -174,13 +174,13 @@ impl Engine {
                     let reason = temp.map(|t| format!("reached {t} °C")).unwrap_or_else(|| "lost its temperature reading".into());
                     if gpu::restore(core, mem).is_ok() {
                         sess.gpu_applied = false;
-                        self.log(format!("Graphics card {reason}: clocks put back to their previous values"));
+                        self.log(Tags::GPU, format!("Graphics card {reason}: clocks put back to their previous values"));
                         self.counts(|c| {
                             c.gpu_core_mhz = 0;
                             c.gpu_mem_mhz = 0;
                         });
                     } else {
-                        self.log(format!("Graphics card {reason}: could not restore clocks; retrying"));
+                        self.log(Tags::GPU.and(Tags::ERROR), format!("Graphics card {reason}: could not restore clocks; retrying"));
                     }
                 }
             }
@@ -189,7 +189,7 @@ impl Engine {
 
     pub(super) fn boost_game_process(&mut self, pid: u32, s: &Settings, dry: bool) {
         if dry {
-            self.log(format!("Would set game priority to {}", s.priority.label()));
+            self.log(Tags::GAME, format!("Would set game priority to {}", s.priority.label()));
             self.counts(|c| c.planned += 1);
             return;
         }
@@ -197,62 +197,62 @@ impl Engine {
         if let Some(prev) = procs::get_priority(pid) {
             let class = procs::priority_class(s.priority);
             if prev == class {
-                self.log(format!("Game priority already {}", s.priority.label()));
+                self.log(Tags::GAME, format!("Game priority already {}", s.priority.label()));
             } else if start == 0 {
-                self.log("Game priority unchanged: could not identify the game process safely");
+                self.log(Tags::GAME.and(Tags::ERROR), "Game priority unchanged: could not identify the game process safely");
             } else if self.push_undo(Undo::Priority { pid, class: prev, start }) {
                 if procs::set_priority(pid, class) {
                     // Old profiles can still contain Realtime; never apply that dangerous class.
                     if s.priority == crate::config::Priority::Realtime {
-                        self.log("Game priority: High (old Realtime choice capped for safety)");
+                        self.log(Tags::GAME.and(Tags::OK), "Game priority: High (old Realtime choice capped for safety)");
                     } else {
-                        self.log(format!("Game priority: {}", s.priority.label()));
+                        self.log(Tags::GAME.and(Tags::OK), format!("Game priority: {}", s.priority.label()));
                     }
                     self.counts(|c| c.game_priority = true);
                 } else {
                     self.forget_last_undo();
                     if !crate::ffi::is_admin() {
-                        self.log("Windows blocked the priority change: this game runs as administrator, so CatalyX must too (turn on Settings > Ask for administrator rights at start)");
+                        self.log(Tags::GAME.and(Tags::ERROR), "Windows blocked the priority change: this game runs as administrator, so CatalyX must too (turn on Settings > Ask for administrator rights at start)");
                     } else {
-                        self.log("Windows refused to change the game's priority");
+                        self.log(Tags::GAME.and(Tags::ERROR), "Windows refused to change the game's priority");
                     }
                 }
             }
         } else {
-            self.log("Could not read the game's priority (try running as administrator)");
+            self.log(Tags::GAME.and(Tags::ERROR), "Could not read the game's priority (try running as administrator)");
         }
         if s.io_boost && start != 0 {
             if let Some(previous) = procs::io_priority(pid) {
                 if previous != 3 && self.push_undo(Undo::IoPriority { pid, level: previous, start }) {
                     if !procs::set_io_priority(pid, 3) {
-                        self.log("Game disk I/O priority unavailable; leaving it unchanged");
+                        self.log(Tags::GAME.and(Tags::WARN), "Game disk I/O priority unavailable; leaving it unchanged");
                         self.forget_last_undo();
                     } else if procs::io_priority(pid) == Some(3) {
-                        self.log("Game disk I/O priority: High (checked with Windows)");
+                        self.log(Tags::GAME.and(Tags::OK), "Game disk I/O priority: High (checked with Windows)");
                         self.counts(|c| c.io_boost = true);
                         // Memory page priority dies with the process, so it needs no recovery record.
                         if procs::set_memory_priority(pid, 5) {
-                            self.log("Game memory pages protected from trimming");
+                            self.log(Tags::MEMORY, "Game memory pages protected from trimming");
                         }
                     } else {
-                        self.log("Game disk I/O priority could not be verified; recovery is still recorded");
+                        self.log(Tags::GAME.and(Tags::ERROR), "Game disk I/O priority could not be verified; recovery is still recorded");
                     }
                 }
             } else {
-                self.log("Game disk I/O priority unchanged: Windows would not report its previous setting");
+                self.log(Tags::GAME.and(Tags::WARN), "Game disk I/O priority unchanged: Windows would not report its previous setting");
             }
         }
         if s.no_power_throttling && start != 0 {
             if let Some((control, state)) = procs::power_throttling(pid) {
                 if self.push_undo(Undo::Throttling { pid, start, control, state }) {
                     if procs::set_power_throttling(pid, 0x1 | 0x4, 0) {
-                        self.log("Windows efficiency mode kept off for the game");
+                        self.log(Tags::GAME, "Windows efficiency mode kept off for the game");
                     } else {
                         self.forget_last_undo();
                     }
                 }
             } else {
-                self.log("Windows efficiency mode unchanged (could not read its previous setting)");
+                self.log(Tags::GAME.and(Tags::ERROR), "Windows efficiency mode unchanged (could not read its previous setting)");
             }
         }
     }

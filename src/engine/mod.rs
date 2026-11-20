@@ -6,12 +6,14 @@ mod apply;
 mod boost;
 mod desktop;
 mod journal;
+mod log;
 mod restore;
 mod running;
 mod types;
 
 pub use desktop::{desktop_test, run_guard};
 pub use journal::{clear_shell_journal, journal_has_shell};
+pub use log::{LogLine, Tags};
 pub use types::*;
 
 use crate::config::{app_is_protected, service_is_protected, CpuLevel, GpuLevel, PowerChoice, ProcAction, Settings};
@@ -82,7 +84,7 @@ impl Engine {
         let name: Vec<u16> = "Local\\CatalyX.ActiveBoost".encode_utf16().chain(Some(0)).collect();
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
         if handle == 0 {
-            self.log("Could not reserve a safe boost session");
+            self.log(Tags::GAME.and(Tags::ERROR), "Could not reserve a safe boost session");
             return false;
         }
         let result = unsafe { crate::ffi::WaitForSingleObject(handle as *mut std::ffi::c_void, 0) };
@@ -90,7 +92,7 @@ impl Engine {
             unsafe {
                 CloseHandle(handle as *mut std::ffi::c_void);
             }
-            self.log("Another CatalyX window is already boosting; restore it before starting a second session");
+            self.log(Tags::GAME, "Another CatalyX window is already boosting; restore it before starting a second session");
             return false;
         }
         self.lock_handle = handle;
@@ -107,10 +109,9 @@ impl Engine {
         }
     }
 
-    fn log(&self, s: impl Into<String>) {
-        let s = s.into();
+    fn log(&self, tags: Tags, s: impl Into<String>) {
         if let Ok(mut st) = self.status.lock() {
-            st.log.push(s);
+            st.log.push(LogLine::new(tags, s));
             let n = st.log.len();
             if n > 200 {
                 st.log.drain(0..n - 200);
@@ -155,7 +156,7 @@ impl Engine {
             let mut next = s.undo.clone();
             next.push(u.clone());
             if let Err(e) = persist_journal(&next) {
-                self.log(format!("Change skipped: recovery journal could not be saved ({e})"));
+                self.log(Tags::RESTORE.and(Tags::ERROR), format!("Change skipped: recovery journal could not be saved ({e})"));
                 return false;
             }
         }
@@ -176,7 +177,7 @@ impl Engine {
             let mut next = s.undo.clone();
             next.extend(items.iter().cloned());
             if let Err(e) = persist_journal(&next) {
-                self.log(format!("Changes skipped: recovery journal could not be saved ({e})"));
+                self.log(Tags::RESTORE.and(Tags::ERROR), format!("Changes skipped: recovery journal could not be saved ({e})"));
                 return false;
             }
         }
@@ -224,7 +225,7 @@ impl Engine {
         // That one thing is put back at once, without asking: nobody wants to find no taskbar.
         if journal_has_shell() {
             if self.acquire_lock() {
-                self.log("A previous session left the Windows desktop switched off: bringing it back");
+                self.log(Tags::DESKTOP, "A previous session left the Windows desktop switched off: bringing it back");
                 self.restore_journal();
                 self.release_lock();
             } else if let Ok(mut st) = self.status.lock() {
@@ -245,7 +246,7 @@ impl Engine {
                     // A previous interrupted boost must be restored before beginning another.
                     // In particular, do not replace its journal with a fresh session's first entry.
                     if !req.dry_run && journal_path().exists() {
-                        self.log("A previous boost needs restoring first; choose Restore to normal mode");
+                        self.log(Tags::RESTORE, "A previous boost needs restoring first; choose Restore to normal mode");
                         if let Ok(mut st) = self.status.lock() {
                             st.phase = Phase::Idle;
                             st.pending_journal = true;

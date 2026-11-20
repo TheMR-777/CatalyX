@@ -127,16 +127,19 @@ something is removed).
 ### The activity log: tagged lines
 
 ```rust
-pub struct LogLine { pub text: String, pub tags: Tags }   // Tags: a u32 bit set, so a line can carry several
+pub struct LogLine { pub text: String, pub tags: Tags }   // Tags: a u16 bit set, so a line can carry several
 ```
 
-The engine tags each line when it writes it, instead of skins guessing from the words in it. Starting set:
-- **tone** (exactly one): `OK`, `WARN`, `ERROR`, `INFO`
-- **area** (zero or more): `POWER`, `WINDOWS`, `APPS`, `SERVICES`, `MEMORY`, `GPU`, `GAME`, `DESKTOP`, `RESTORE`
-- **qualities** (zero or more): `VERIFIED` (read back from Windows), `NEEDS_ADMIN`, `SKIPPED`
+The engine tags each line when it writes it, instead of skins guessing from the words in it (a skin used to look
+for "could not" and "skipped": every rewording changed the colours, and a new message needed a new keyword).
+Starting set, built with `Tags::area.and(Tags::tone)`:
+- **tone** (at most one): `OK` (made and checked), `WARN` (asked for, did not happen), `ERROR` (failed).
+  **No tone bit at all is the plain, factual line**, which is most of them - there is no `INFO` to remember.
+- **area** (one): `POWER`, `WINDOWS`, `APPS`, `SERVICES`, `MEMORY`, `GPU`, `GAME`, `DESKTOP`, `RESTORE`
 
-New tags can be added without breaking skins (unknown bits are ignored). A skin can colour by tone, group by area
-(for example a step list), or mark verified lines.
+New tags can be added without breaking skins (a skin asks `tags.has(...)` about the bits it knows). A skin can
+colour by tone, group by area (for example a step list), or hide an area. `LogLine` implements `Display`, so a
+front-end that only prints text (the command line) needs no tags at all.
 
 ### Intent (every change a person can ask for)
 

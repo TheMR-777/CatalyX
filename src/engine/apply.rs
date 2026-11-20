@@ -10,7 +10,7 @@ impl Engine {
             return;
         }
         let Some(prev) = power::active() else {
-            self.log("Power plan unchanged: could not read the active plan for recovery");
+            self.log(Tags::POWER.and(Tags::ERROR), "Power plan unchanged: could not read the active plan for recovery");
             return;
         };
         // A CPU level always needs CatalyX's own plan: it is where the processor settings are
@@ -23,7 +23,7 @@ impl Engine {
         };
         let cpu_note = if want_cpu { format!(", CPU {}", s.cpu.label()) } else { String::new() };
         if self.dry() {
-            self.log(format!("Would switch power plan to {label}{cpu_note}"));
+            self.log(Tags::POWER, format!("Would switch power plan to {label}{cpu_note}"));
             self.counts(|c| {
                 c.power_plan = label.into();
                 c.cpu_level = if want_cpu { s.cpu.label().into() } else { String::new() };
@@ -33,11 +33,14 @@ impl Engine {
         }
         let mut target = if own_plan { power::BOOST_PLAN.to_string() } else { power::HIGH_PERFORMANCE.to_string() };
         if own_plan && !power::ensure_boost_plan(s.cpu, &source) {
-            self.log("Could not set the CatalyX processor settings; trying High performance instead (CPU tuning not verified)");
+            self.log(
+                Tags::POWER.and(Tags::ERROR),
+                "Could not set the CatalyX processor settings; trying High performance instead (CPU tuning not verified)",
+            );
             target = power::HIGH_PERFORMANCE.to_string();
         }
         if prev.eq_ignore_ascii_case(&target) {
-            self.log(format!("Power plan already {}", if target == power::BOOST_PLAN { label } else { "High performance" }));
+            self.log(Tags::POWER, format!("Power plan already {}", if target == power::BOOST_PLAN { label } else { "High performance" }));
             self.counts(|c| c.power_plan = if target == power::BOOST_PLAN { label.into() } else { "High performance".into() });
             return;
         }
@@ -53,17 +56,22 @@ impl Engine {
                 false
             };
             let applied_label = if target == power::BOOST_PLAN { label } else { "High performance" };
-            self.log(format!(
-                "Power plan: {applied_label}{}{}",
-                if verified { cpu_note.as_str() } else { "" },
-                if verified {
-                    " (checked: turbo aggressive, cores unparked)"
-                } else if want_cpu {
-                    " (CPU tuning unavailable on this PC)"
-                } else {
-                    ""
-                }
-            ));
+            // "Checked" is the news here: only a verified change is worth highlighting.
+            let tone = if verified { Tags::POWER.and(Tags::OK) } else { Tags::POWER };
+            self.log(
+                tone,
+                format!(
+                    "Power plan: {applied_label}{}{}",
+                    if verified { cpu_note.as_str() } else { "" },
+                    if verified {
+                        " (checked: turbo aggressive, cores unparked)"
+                    } else if want_cpu {
+                        " (CPU tuning unavailable on this PC)"
+                    } else {
+                        ""
+                    }
+                ),
+            );
             self.counts(|c| {
                 c.power_plan = applied_label.into();
                 if verified {
@@ -71,12 +79,12 @@ impl Engine {
                 }
             });
         } else {
-            self.log("Could not change the power plan");
+            self.log(Tags::POWER.and(Tags::ERROR), "Could not change the power plan");
         }
     }
     pub(super) fn set_reg(&mut self, sets: Vec<RegSet>, label: &str) {
         if self.dry() {
-            self.log(format!("Would turn on: {label}"));
+            self.log(Tags::WINDOWS, format!("Would turn on: {label}"));
             self.counts(|c| {
                 c.tweaks += 1;
                 c.planned += 1;
@@ -88,7 +96,7 @@ impl Engine {
             let prev = match tweaks::read(r.hive, r.path, r.name) {
                 Ok(prev) => prev,
                 Err(e) => {
-                    self.log(format!("Windows: {label} skipped {} (cannot save old value: {e})", r.name));
+                    self.log(Tags::WINDOWS.and(Tags::WARN), format!("Windows: {label} skipped {} (cannot save old value: {e})", r.name));
                     ok = false;
                     continue;
                 }
@@ -106,10 +114,10 @@ impl Engine {
             }
         }
         if ok {
-            self.log(format!("Windows: {label}"));
+            self.log(Tags::WINDOWS, format!("Windows: {label}"));
             self.counts(|c| c.tweaks += 1);
         } else {
-            self.log(format!("Windows: {label} needs administrator rights"));
+            self.log(Tags::WINDOWS.and(Tags::WARN), format!("Windows: {label} needs administrator rights"));
         }
     }
 
@@ -132,13 +140,13 @@ impl Engine {
         if s.pause_maintenance {
             self.set_reg(tweaks::maintenance_off(), "automatic maintenance paused");
             if self.dry() {
-                self.log("Would pause scheduled defrag");
+                self.log(Tags::WINDOWS, "Would pause scheduled defrag");
                 self.counts(|c| c.planned += 1);
             } else if tweaks::task_enabled(tweaks::DEFRAG_TASK) == Some(true)
                 && self.push_undo(Undo::Task { name: tweaks::DEFRAG_TASK.into(), was_enabled: true })
             {
                 if tweaks::set_task(tweaks::DEFRAG_TASK, false) {
-                    self.log("Windows: scheduled defrag paused");
+                    self.log(Tags::WINDOWS, "Windows: scheduled defrag paused");
                 } else {
                     self.forget_last_undo();
                 }
@@ -148,7 +156,10 @@ impl Engine {
     pub(super) fn apply_services(&mut self, list: &BTreeMap<String, bool>) {
         if !self.dry() && !crate::ffi::is_admin() {
             let n = list.values().filter(|on| **on).count();
-            self.log(format!("Services: {n} chosen but skipped - stopping a Windows service needs administrator rights"));
+            self.log(
+                Tags::SERVICES.and(Tags::WARN),
+                format!("Services: {n} chosen but skipped - stopping a Windows service needs administrator rights"),
+            );
             return;
         }
         let running = services::list();
@@ -176,11 +187,11 @@ impl Engine {
                     .find(|r| r.name.eq_ignore_ascii_case(unstartable[0]))
                     .map(|r| r.display.clone())
                     .unwrap_or_else(|| unstartable[0].clone());
-                self.log(format!("Service {shown}: Windows does not allow it to be started again, so it is left running"));
+                self.log(Tags::SERVICES, format!("Service {shown}: Windows does not allow it to be started again, so it is left running"));
                 continue;
             }
             if self.dry() {
-                self.log(format!("Would stop service {}", svc.display));
+                self.log(Tags::SERVICES, format!("Would stop service {}", svc.display));
                 self.counts(|c| c.planned += 1);
                 continue;
             }
@@ -210,9 +221,9 @@ impl Engine {
                         let shown =
                             running.iter().find(|r| r.name.eq_ignore_ascii_case(name)).map(|r| r.display.clone()).unwrap_or(name.clone());
                         if name.eq_ignore_ascii_case(&svc.name) {
-                            self.log(format!("Stopped service {shown}"));
+                            self.log(Tags::SERVICES, format!("Stopped service {shown}"));
                         } else {
-                            self.log(format!("Stopped service {shown} (it depends on {})", svc.display));
+                            self.log(Tags::SERVICES, format!("Stopped service {shown} (it depends on {})", svc.display));
                         }
                     }
                     // A service that was recorded but did not stop gets its record back, so a
@@ -221,7 +232,9 @@ impl Engine {
                 }
                 Err(e) => {
                     self.forget_unstopped_services(&names, &[], &kept);
-                    self.log(format!("Service {}: {e}", svc.display));
+                    // A service that was chosen for stopping did not stop: a warning, whatever
+                    // the sentence Windows supplied.
+                    self.log(Tags::SERVICES.and(Tags::WARN), format!("Service {}: {e}", svc.display));
                 }
             }
         }
@@ -298,7 +311,7 @@ impl Engine {
             }
             if self.dry() {
                 if !enforcing {
-                    self.log(format!("Would {} {}", action.label().to_lowercase(), p.name));
+                    self.log(Tags::APPS, format!("Would {} {}", action.label().to_lowercase(), p.name));
                     self.counts(|c| c.planned += 1);
                 }
                 continue;
@@ -323,7 +336,7 @@ impl Engine {
                     }
                     if procs::terminate(p.pid) {
                         closed += 1;
-                        self.log(format!("{} {}", if enforcing { "Closed again" } else { "Closed" }, p.name));
+                        self.log(Tags::APPS, format!("{} {}", if enforcing { "Closed again" } else { "Closed" }, p.name));
                     }
                 }
                 ProcAction::Suspend => {
@@ -335,7 +348,7 @@ impl Engine {
                         if let Some(s) = &mut self.session {
                             s.paused.insert(p.pid);
                         }
-                        self.log(format!("Paused {}", p.name));
+                        self.log(Tags::APPS, format!("Paused {}", p.name));
                     } else {
                         self.forget_last_undo();
                     }
@@ -415,10 +428,10 @@ impl Engine {
             }
         }
         if self.dry() {
-            self.log(format!("Would lower {n} other apps to the lowest priority"));
+            self.log(Tags::APPS, format!("Would lower {n} other apps to the lowest priority"));
             self.counts(|c| c.planned += 1);
         } else {
-            self.log(format!("Lowered {n} other apps to the lowest priority"));
+            self.log(Tags::APPS, format!("Lowered {n} other apps to the lowest priority"));
             self.counts(|c| c.apps_lowered += n);
         }
     }
@@ -426,7 +439,7 @@ impl Engine {
     pub(super) fn clean_ram(&mut self) {
         let snap = self.snapshot();
         if self.dry() {
-            self.log("Would free memory held by background apps");
+            self.log(Tags::MEMORY, "Would free memory held by background apps");
             self.counts(|c| c.planned += 1);
             return;
         }
@@ -452,32 +465,35 @@ impl Engine {
         std::thread::sleep(Duration::from_millis(400));
         sys.refresh_memory();
         let freed = before.saturating_sub(sys.used_memory());
-        self.log(format!("Freed {} of memory from {n} apps", procs::fmt_mem(freed)));
+        self.log(Tags::MEMORY, format!("Freed {} of memory from {n} apps", procs::fmt_mem(freed)));
         self.counts(|c| c.ram_freed += freed);
     }
 
     pub(super) fn apply_gpu(&mut self, level: GpuLevel) {
         let st = gpu::probe();
         if !st.supported {
-            self.log(format!("Graphics card tuning skipped: {}", if st.note.is_empty() { "not supported" } else { &st.note }));
+            self.log(
+                Tags::GPU.and(Tags::WARN),
+                format!("Graphics card tuning skipped: {}", if st.note.is_empty() { "not supported" } else { &st.note }),
+            );
             return;
         }
         let (c, m) = gpu::planned(&st, level);
         if c <= 0 && m <= 0 {
-            self.log("Graphics card tuning skipped: no safe offset available");
+            self.log(Tags::GPU.and(Tags::WARN), "Graphics card tuning skipped: no safe offset available");
             return;
         }
         let Some(t) = gpu::temperature() else {
-            self.log("Graphics card tuning skipped: temperature sensor unavailable");
+            self.log(Tags::GPU.and(Tags::WARN), "Graphics card tuning skipped: temperature sensor unavailable");
             return;
         };
         let limit = self.session.as_ref().map(|s| s.req.gpu_temp_limit).unwrap_or(83);
         if t.saturating_add(5) >= limit {
-            self.log(format!("Graphics card is already warm ({t} °C); tuning skipped"));
+            self.log(Tags::GPU.and(Tags::WARN), format!("Graphics card is already warm ({t} °C); tuning skipped"));
             return;
         }
         if self.dry() {
-            self.log(format!("Would raise graphics clocks: core +{} MHz, memory +{} MHz", c / 1000, m / 1000));
+            self.log(Tags::GPU, format!("Would raise graphics clocks: core +{} MHz, memory +{} MHz", c / 1000, m / 1000));
             self.counts(|x| {
                 x.gpu_core_mhz = c / 1000;
                 x.gpu_mem_mhz = m / 1000;
@@ -493,7 +509,7 @@ impl Engine {
                 if let Some(s) = &mut self.session {
                     s.gpu_applied = true;
                 }
-                self.log(format!("Graphics card: core +{} MHz, memory +{} MHz", c / 1000, m / 1000));
+                self.log(Tags::GPU, format!("Graphics card: core +{} MHz, memory +{} MHz", c / 1000, m / 1000));
                 self.counts(|x| {
                     x.gpu_core_mhz = c / 1000;
                     x.gpu_mem_mhz = m / 1000;
@@ -507,12 +523,12 @@ impl Engine {
                 let now = gpu::probe();
                 if now.core.current_khz == st.core.current_khz && now.mem.current_khz == st.mem.current_khz {
                     self.forget_last_undo();
-                    self.log(format!("Graphics card tuning skipped: {e}"));
+                    self.log(Tags::GPU.and(Tags::WARN), format!("Graphics card tuning skipped: {e}"));
                 } else {
                     if let Some(s) = &mut self.session {
                         s.gpu_applied = true;
                     }
-                    self.log(format!("Graphics card tuning failed: {e}; recovery is still available"));
+                    self.log(Tags::GPU.and(Tags::ERROR), format!("Graphics card tuning failed: {e}; recovery is still available"));
                 }
             }
         }
