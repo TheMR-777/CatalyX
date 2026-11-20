@@ -1158,6 +1158,14 @@ mod tests {
     }
 
     #[test]
+    fn the_view_shares_the_sample_the_monitor_published() {
+        let (mut st, _rx) = state();
+        let published = procs::latest(&st.snap);
+        let view = st.view();
+        assert!(Arc::ptr_eq(&view.snap, &published), "the view shares the sample instead of copying the process list");
+    }
+
+    #[test]
     fn drawing_marks_the_revision_it_shows() {
         let (mut st, _rx) = state();
         st.rev = 7;

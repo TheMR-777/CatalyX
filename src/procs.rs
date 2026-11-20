@@ -45,21 +45,31 @@ impl Snapshot {
     pub fn mem_free(&self) -> u64 {
         self.mem_total.saturating_sub(self.mem_used)
     }
-    /// True when `pid` is `ancestor` or one of its children, grandchildren, ...
-    pub fn descends_from(&self, pid: u32, ancestor: u32) -> bool {
-        let map: HashMap<u32, u32> = self.procs.iter().map(|p| (p.pid, p.parent)).collect();
-        let mut cur = pid;
-        for _ in 0..32 {
-            if cur == ancestor {
-                return true;
-            }
-            match map.get(&cur) {
-                Some(&p) if p != 0 && p != cur => cur = p,
-                _ => return false,
-            }
+}
+
+/// Who started whom, built once for a pass over the whole list. The walk below needs this table;
+/// building it inside the walk costs one scan per question, and a scoring pass asks it about every
+/// process on the machine.
+pub type Parents = HashMap<u32, u32>;
+
+pub fn parents(procs: &[ProcInfo]) -> Parents {
+    procs.iter().map(|p| (p.pid, p.parent)).collect()
+}
+
+/// True when `pid` is `ancestor` or one of its children, grandchildren, ... At most 32 levels:
+/// a longer parent chain is a cycle, and the walk stops instead of looping.
+pub fn descends_from(parents: &Parents, pid: u32, ancestor: u32) -> bool {
+    let mut cur = pid;
+    for _ in 0..32 {
+        if cur == ancestor {
+            return true;
         }
-        false
+        match parents.get(&cur) {
+            Some(&p) if p != 0 && p != cur => cur = p,
+            _ => return false,
+        }
     }
+    false
 }
 
 /// The latest monitor sample.
@@ -69,14 +79,22 @@ impl Snapshot {
 pub type SharedSnapshot = Arc<Mutex<Arc<Snapshot>>>;
 
 /// The latest sample. One lock, one Arc clone, whatever the machine is running.
+///
+/// A sampler that panicked while holding the lock leaves the last sample readable instead of
+/// blinding every reader with an empty machine (the status cell makes the same choice, and for the
+/// same reason: a poisoned lock must not hide what the program is doing).
 pub fn latest(shared: &SharedSnapshot) -> Arc<Snapshot> {
-    shared.lock().map(|s| Arc::clone(&s)).unwrap_or_default()
+    match shared.lock() {
+        Ok(s) => Arc::clone(&s),
+        Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+    }
 }
 
 /// Replaces the sample. The monitor is the only writer in the program; the tests use it too.
 pub fn publish(shared: &SharedSnapshot, snap: Snapshot) {
-    if let Ok(mut s) = shared.lock() {
-        *s = Arc::new(snap);
+    match shared.lock() {
+        Ok(mut s) => *s = Arc::new(snap),
+        Err(poisoned) => *poisoned.into_inner() = Arc::new(snap),
     }
 }
 
@@ -661,9 +679,29 @@ mod tests {
         let snap = chain(&[(1, 0), (2, 1), (3, 2)]);
         assert_eq!(snap.find(2).map(|p| p.pid), Some(2));
         assert!(snap.find(9).is_none());
-        assert!(snap.descends_from(3, 1), "a grandchild descends from its grandparent");
-        assert!(snap.descends_from(3, 3), "a process descends from itself");
-        assert!(!snap.descends_from(1, 3), "a parent does not descend from its child");
+        // One table, many questions: this is what a scoring pass over every process uses.
+        let table = parents(&snap.procs);
+        assert!(descends_from(&table, 3, 1), "a grandchild descends from its grandparent");
+        assert!(descends_from(&table, 3, 3), "a process descends from itself");
+        assert!(!descends_from(&table, 1, 3), "a parent does not descend from its child");
+        assert!(!descends_from(&table, 9, 1), "a process that is gone descends from nothing");
+        // A stale pid table can describe a cycle: the walk must end, not spin.
+        let odd = chain(&[(1, 2), (2, 1)]);
+        assert!(!descends_from(&parents(&odd.procs), 1, 9), "a cycle cannot reach a process outside it");
+    }
+
+    #[test]
+    fn a_poisoned_cell_still_hands_out_the_last_sample() {
+        let shared = cell(3);
+        let other = shared.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = other.lock();
+            panic!("poison the sampler's lock");
+        })
+        .join();
+        assert_eq!(latest(&shared).serial, 3, "a panicked sampler must not blind the engine");
+        publish(&shared, Snapshot { serial: 4, ..Default::default() });
+        assert_eq!(latest(&shared).serial, 4, "and the next sample still goes in");
     }
 
     #[test]

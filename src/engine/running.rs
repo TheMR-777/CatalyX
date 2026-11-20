@@ -58,8 +58,11 @@ impl Engine {
             let switch = match (&cand, alive) {
                 (Some((p, _)), false) => Some(p.clone()),
                 (Some((p, sc)), true) if elapsed < Duration::from_secs(90) && p.pid != sess.game_pid => {
-                    let cur =
-                        snap.find(sess.game_pid).map(|g| launcher::score(g, &snap, &sess.plan, sess.root_pid, &real, since)).unwrap_or(0);
+                    let parents = procs::parents(&snap.procs);
+                    let cur = snap
+                        .find(sess.game_pid)
+                        .map(|g| launcher::score(g, &parents, &sess.plan, sess.root_pid, &real, since))
+                        .unwrap_or(0);
                     if *sc > cur + 15 {
                         Some(p.clone())
                     } else {

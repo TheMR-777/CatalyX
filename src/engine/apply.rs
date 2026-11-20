@@ -259,21 +259,9 @@ impl Engine {
     pub(super) fn game_family(&self, snap: &Snapshot) -> HashSet<u32> {
         let mut set = HashSet::new();
         if let Some(s) = &self.session {
-            // One parent table for the whole pass (descends_from would rebuild it per process).
-            let parent: std::collections::HashMap<u32, u32> = snap.procs.iter().map(|p| (p.pid, p.parent)).collect();
-            let walk_up = |from: u32, target: u32| -> bool {
-                let mut cur = from;
-                for _ in 0..32 {
-                    if cur == target {
-                        return true;
-                    }
-                    match parent.get(&cur) {
-                        Some(&q) if q != 0 && q != cur => cur = q,
-                        _ => return false,
-                    }
-                }
-                false
-            };
+            // One parent table for the whole pass; the walk itself lives in `procs`.
+            let parents = procs::parents(&snap.procs);
+            let walk_up = |from: u32, target: u32| -> bool { procs::descends_from(&parents, from, target) };
             for p in &snap.procs {
                 if let Some(r) = s.root_pid {
                     // The launcher, everything it started, and what started the launcher.

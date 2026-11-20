@@ -2,7 +2,7 @@
 //! and finding the real game program behind launchers and batch files.
 
 use crate::config::{file_name_lower, HELPER_HINTS, NOT_A_GAME};
-use crate::procs::{ProcInfo, Snapshot};
+use crate::procs::{self, ProcInfo, Snapshot};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -168,7 +168,8 @@ pub fn in_windows_folder(exe: &str) -> bool {
 }
 
 /// How likely a running program is the game. Higher is more likely.
-pub fn score(p: &ProcInfo, snap: &Snapshot, plan: &LaunchPlan, root: Option<u32>, real_exe: &str, since: u64) -> i32 {
+/// `parents` is built once for the whole pass (see `procs::parents`), never per process.
+pub fn score(p: &ProcInfo, parents: &procs::Parents, plan: &LaunchPlan, root: Option<u32>, real_exe: &str, since: u64) -> i32 {
     let n = p.name_lower.as_str();
     if NOT_A_GAME.contains(&n) || crate::config::app_is_protected(n) {
         return -1000;
@@ -187,7 +188,7 @@ pub fn score(p: &ProcInfo, snap: &Snapshot, plan: &LaunchPlan, root: Option<u32>
         s += 60;
     }
     if let Some(r) = root {
-        if snap.descends_from(p.pid, r) {
+        if procs::descends_from(parents, p.pid, r) {
             s += 30;
         }
     }
@@ -216,8 +217,9 @@ pub fn score(p: &ProcInfo, snap: &Snapshot, plan: &LaunchPlan, root: Option<u32>
 /// The best guess for the game right now, if one is convincing enough.
 pub fn best(snap: &Snapshot, plan: &LaunchPlan, root: Option<u32>, real_exe: &str, since: u64) -> Option<(ProcInfo, i32)> {
     let mut best: Option<(ProcInfo, i32)> = None;
+    let parents = procs::parents(&snap.procs);
     for p in &snap.procs {
-        let sc = score(p, snap, plan, root, real_exe, since);
+        let sc = score(p, &parents, plan, root, real_exe, since);
         if sc < 45 {
             continue;
         }
