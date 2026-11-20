@@ -1,0 +1,19 @@
+Preset Balanced
+  priority             Above normal
+  power                CatalyX plan
+  gpu                  Off
+  cpu                  Boost
+  apps                 on
+  services             on
+  clean-ram            off
+  io-boost             on
+  purge-standby        off
+  game-mode            on
+  dvr-off              on
+  notifications-off    on
+  transparency-off     off
+  maintenance-off      on
+  mmcss                off
+  no-throttling        on
+  lower-others         off
+  quiet-desktop        off

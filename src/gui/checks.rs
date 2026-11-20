@@ -44,7 +44,10 @@ impl CatalyxApp {
             return;
         }
         if let Some(path) = self.opts.screenshot.clone() {
-            if self.frames == 16 && !self.shot_requested {
+            // Enough frames to have drawn everything, and enough time for the layout to settle: a
+            // page whose content is still finding its height shows a scroll bar on some runs and not
+            // on others, at exactly the same frame count.
+            if self.frames >= 16 && self.started.elapsed() >= Duration::from_millis(700) && !self.shot_requested {
                 self.shot_requested = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }

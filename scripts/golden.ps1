@@ -14,10 +14,12 @@
 .EXAMPLE
   .\scripts\golden.ps1 -Capture ..\CatalyX-workbench\baseline\shots
   .\scripts\golden.ps1 -Compare ..\CatalyX-workbench\baseline\shots, $env:TEMP\catalyx-golden-now
+  .\scripts\golden.ps1 -Update ..\CatalyX-workbench\baseline\shots   # after a deliberate visual change
 #>
 param(
   [string] $Capture,
   [string[]] $Compare,
+  [string] $Update,
   [switch] $Strict
 )
 $ErrorActionPreference = 'Stop'
@@ -76,6 +78,36 @@ function Invoke-Capture([string]$dir) {
     [System.Windows.Forms.Cursor]::Position = $pointer
   }
   Write-Host "Captured $($shots.Count) image(s) into $dir" -ForegroundColor Green
+}
+
+# A deliberate re-baseline: capture, say exactly which pictures changed, then install them. Used only
+# when a visual change is intended (never to make a failing comparison pass), so the receipt prints the
+# names and asks for the reason to go in the same commit.
+function Invoke-Update([string]$dir) {
+  if (-not (Test-Path $dir)) { throw "$dir does not hold a baseline yet; use -Capture to make one" }
+  $tmp = Join-Path $env:TEMP 'catalyx-golden-update'
+  Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  Invoke-Capture $tmp
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  $changed = @()
+  $skipped = 0
+  foreach ($s in $shots) {
+    $name = "$($s[0]).png"
+    # A page fed by this PC's live state can never be a golden: re-baselining it would bake one
+    # machine's process list into the pictures every later run is judged against.
+    if (($live -contains $s[1]) -or ($live -contains $s[0])) { $skipped++; continue }
+    $old = Join-Path $dir $name
+    $new = Join-Path $tmp $name
+    $same = (Test-Path $old) -and ((Get-FileHash $old).Hash -eq (Get-FileHash $new).Hash)
+    if (-not $same) { $changed += $name; Copy-Item $new $old -Force }
+  }
+  if ($changed.Count -eq 0) {
+    Write-Host "The baseline already matched; nothing was updated ($skipped live page(s) left alone)." -ForegroundColor Green
+  } else {
+    Write-Host ("Re-baselined {0} image(s): {1}" -f $changed.Count, ($changed -join ', ')) -ForegroundColor Yellow
+    Write-Host "Left $skipped live page(s) alone: they can never be a golden."
+    Write-Host 'Put the reason for these pictures in the same commit.'
+  }
 }
 
 $cs = @'
@@ -146,5 +178,6 @@ function Invoke-Compare([string]$a, [string]$b) {
 }
 
 if ($Capture) { Invoke-Capture $Capture }
+elseif ($Update) { Invoke-Update $Update }
 elseif ($Compare -and $Compare.Count -eq 2) { Invoke-Compare $Compare[0] $Compare[1] }
-else { throw 'Use -Capture <dir> or -Compare <golden dir>, <new dir>' }
+else { throw 'Use -Capture <dir>, -Compare <golden dir>, <new dir> or -Update <golden dir>' }

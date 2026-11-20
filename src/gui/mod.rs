@@ -115,6 +115,8 @@ pub struct CatalyxApp {
     pub drawn: HashSet<&'static str>,
     selftest: Option<crate::selftest::SelfTest>,
     opts: Options,
+    /// When the window started, for check runs that must wait for the layout to settle.
+    started: Instant,
     frames: u32,
     shot_requested: bool,
     tour_step: usize,
@@ -182,6 +184,7 @@ impl CatalyxApp {
             drawn: HashSet::new(),
             selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
+            started: Instant::now(),
             frames: 0,
             shot_requested: false,
             tour_step: 0,
