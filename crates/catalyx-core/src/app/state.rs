@@ -390,7 +390,7 @@ impl State {
                     self.mark_dirty();
                 }
             }
-            Intent::SetPref { key, value } => self.set_pref(&key, value),
+            Intent::SetPref { skin, key, value } => self.set_pref(skin, key, value),
         }
     }
 
@@ -635,27 +635,14 @@ impl State {
         self.toast(Tone::Ok, "Settings reset");
     }
 
-    /// A look preference: stored as it comes, but only for the five fields the classic skin uses
-    /// until Phase 1b moves them under `skins.<name>`.
-    fn set_pref(&mut self, key: &str, value: String) {
-        let tint = value.parse::<u8>().ok().filter(|n| *n <= 2);
-        let known = match key {
-            "theme" | "accent" | "boost-control" => true,
-            "appearance" => matches!(value.as_str(), "dark" | "light" | "system"),
-            "tint" => tint.is_some(),
-            _ => false,
-        };
-        if !known {
+    /// A skin's own preference, stored under its name exactly as sent. The key means nothing here:
+    /// the skin validates its own values before sending them, and the one thing that cannot be
+    /// stored usefully (an empty key) is refused.
+    fn set_pref(&mut self, skin: &str, key: &str, value: String) {
+        if key.is_empty() || skin.is_empty() {
             return;
         }
-        let cfg = self.cfg_mut();
-        match key {
-            "theme" => cfg.theme = value,
-            "accent" => cfg.accent = value,
-            "boost-control" => cfg.boost_control = value,
-            "appearance" => cfg.appearance = value,
-            _ => cfg.tint = tint.unwrap_or(0),
-        }
+        self.cfg_mut().set_pref(skin, key, &value);
         self.mark_dirty();
     }
 
@@ -1187,7 +1174,7 @@ mod tests {
 
         // Any config edit rebuilds it: deciding which fields a plan reads would be fragile, and the
         // rebuild is cheap compared with the frame that follows an edit.
-        st.apply(Intent::SetPref { key: "boost-control".into(), value: "gauge".into() });
+        st.apply(Intent::SetPref { skin: "classic", key: "boost_control", value: "gauge".into() });
         let after_edit = st.view().boost.clone();
         assert!(!Arc::ptr_eq(&first, &after_edit));
 

@@ -2,6 +2,7 @@
 
 use crate::gui::control::Style;
 use crate::gui::pages::Confirm;
+use crate::gui::prefs::{self, Appearance};
 use crate::gui::theme::{self, alpha, AccentId, ThemeId};
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, PickFor};
@@ -35,9 +36,8 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
         |_| {},
         |ui| {
             let dark = app.dark_mode();
-            let cur = app.theme_id();
-            let accent = app.accent_id();
-            let tint = app.v.config.tint;
+            let look = app.look();
+            let (cur, accent, tint) = (look.theme, look.accent, look.tint);
 
             // ---- the look: three surface styles, each previewed with the chosen accent and tint
             ui.label(faint(ui, "Look", 12.0));
@@ -84,7 +84,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         pal.text,
                     );
                     if resp.clicked() {
-                        app.send(Intent::SetPref { key: "theme".into(), value: t.key().into() });
+                        app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::THEME, value: t.key().into() });
                     }
                     resp.on_hover_text(t.about());
                 }
@@ -111,7 +111,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if resp.on_hover_text(a.label()).clicked() {
-                        app.send(Intent::SetPref { key: "accent".into(), value: a.key().into() });
+                        app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::ACCENT, value: a.key().into() });
                     }
                 }
             });
@@ -122,26 +122,22 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
             setting_row(ui, "Surface tint", "How much of the accent bleeds into the window, sidebar and cards", |ui| {
                 let mut i = (tint as usize).min(2);
                 if segmented(ui, 214.0, &mut i, &theme::TINT_LABELS) {
-                    app.send(Intent::SetPref { key: "tint".into(), value: i.to_string() });
+                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::TINT, value: i.to_string() });
                 }
             });
             hairline(ui);
             setting_row(ui, "Boost control", "A bar along the bottom, a gauge or a ring. All three do exactly the same thing", |ui| {
-                let mut i = Style::ALL.iter().position(|s| *s == app.control_style()).unwrap_or(0);
+                let mut i = Style::ALL.iter().position(|s| *s == look.control).unwrap_or(0);
                 let labels: Vec<&str> = Style::ALL.iter().map(|s| s.label()).collect();
                 if segmented(ui, 280.0, &mut i, &labels) {
-                    app.send(Intent::SetPref { key: "boost-control".into(), value: Style::ALL[i].key().into() });
+                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::CONTROL, value: Style::ALL[i].key().into() });
                 }
             });
             hairline(ui);
             setting_row(ui, "Mode", "Dark, light, or follow Windows", |ui| {
-                let mut i = match app.v.config.appearance.as_str() {
-                    "light" => 1,
-                    "system" => 2,
-                    _ => 0,
-                };
+                let mut i = Appearance::ALL.iter().position(|a| *a == look.appearance).unwrap_or(0);
                 if segmented(ui, 214.0, &mut i, &["Dark", "Light", "Windows"]) {
-                    app.send(Intent::SetPref { key: "appearance".into(), value: ["dark", "light", "system"][i].into() });
+                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: Appearance::ALL[i].key().into() });
                 }
             });
         },

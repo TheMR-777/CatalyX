@@ -1,7 +1,8 @@
 # Skins: the contract between the core and the window
 
-> **DRAFT, second round (2026-11-15).** The first round's four open questions are decided (see the end). Nothing
-> here is built yet; once the maintainer agrees, this file is the reference for anyone writing a skin.
+> **DRAFT, second round (2026-11-15, kept current).** The first round's four open questions are decided (see the
+> end). The preferences half is built (storage under `skins.<skin>`, validation in the skin); the `Skin` static and
+> the shared spec table are not. This file is the reference for anyone writing a skin.
 
 ## What a skin is
 
@@ -12,8 +13,8 @@ core what the person asked for, and **decides everything about its own look and 
 customised**.
 
 ```
-app/Cargo.toml:   skin = { path = "../skins/classic", package = "catalyx-skin-classic" }
-app/src/main.rs:  fn main() { catalyx_core::run(skin::SKIN) }
+app/Cargo.toml:   catalyx-skin-classic = { path = "../skins/classic" }
+app/src/main.rs:  catalyx_skin_classic::run(&args)   // the one line that picks the skin
 ```
 
 Another look is another crate in `skins/`; the build is pointed at it by that one line. There is no runtime
@@ -153,7 +154,7 @@ front-end that only prints text (the command line) needs no tags at all.
 | Tuning | `RefreshHardware`, `UsePowerPlan(guid)`, `BuildCatalyxPlan`, `SetHeatLimit(u32)`, `TestGraphicsCard` |
 | Options | `SetOption { key, value }` (restore when the game closes, keep apps off, reopen closed apps, ask before boosting, auto-boost, open as administrator) |
 | System | `FinishWelcome { use_suggestions }`, `SetupOneClickStart`, `RemoveOneClickStart`, `SetWatcher(bool)`, `RelaunchAsAdmin`, `ExportConfig(path)`, `ImportConfig(path)`, `ResetConfig` |
-| Skin | `SetPref { key, value }` (until Phase 1b moves the classic skin's five look fields under `skins.classic`, the core stores exactly those keys and refuses anything else) |
+| Skin | `SetPref { skin: &'static str, key: &'static str, value: String }` - saved under `skins.<skin>`, the skin's own name; the core stores the value verbatim and reads none of it (the classic skin's five look fields live there now, validated in `skins/classic/src/gui/prefs.rs`) |
 
 Confirmation dialogs for ordinary destructive actions (remove a game, reset settings, end an app, clear rules, the
 graphics test) are the skin's UX: it asks, then sends the intent. The one confirmation that is *policy* (the summary
@@ -233,7 +234,7 @@ live graphics-card line is not steady, which makes those screenshots differ betw
 
 1. **Upkeep** runs on a core thread and keeps working while the window is minimised (see Upkeep).
 2. **Skin preferences** are declared by the skin and stored per skin; the core knows no theme, accent or control
-   style. This changes the config file (the classic skin's five look fields move under `skins.classic`, with a
-   one-time migration) and is part of Phase 1.
+   style. Done: the classic skin's five look fields live under `skins.classic` at the same config version, so a
+   file without them simply loads with that skin's defaults (no migration code, see DECISIONS.md).
 3. **Window helpers** live in `catalyx_core::window`.
 4. **Log lines carry tags**, several per line, in a bit set that can grow.

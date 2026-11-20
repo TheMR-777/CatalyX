@@ -70,8 +70,8 @@ impl CatalyxApp {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let (i, tip) = if self.dark_mode() { (Ico::Sun, "Switch to light") } else { (Ico::Moon, "Switch to dark") };
                             if widgets::icon_button(ui, i, tip).clicked() {
-                                let next = if self.dark_mode() { "light" } else { "dark" };
-                                self.send(Intent::SetPref { key: "appearance".into(), value: next.into() });
+                                let next = if self.dark_mode() { prefs::Appearance::Light } else { prefs::Appearance::Dark };
+                                self.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: next.key().into() });
                             }
                         });
                     });

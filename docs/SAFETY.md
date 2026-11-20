@@ -49,7 +49,8 @@ the plan in Windows' own settings: they are not journaled, and **Restore** does 
 ## Never touched
 
 - Windows itself and its shell parts, security software, anti-cheat services and drivers' helpers, input
-  methods, audio services (see `NOT_A_GAME` and the protected lists in `src/config/lists.rs`), and CatalyX.
+  methods, audio services (see `NOT_A_GAME` and the protected lists in `crates/catalyx-core/src/config/lists.rs`), and
+  CatalyX.
 - Realtime priority is never offered (it can freeze Windows' own input).
 - "Require a password on wake" and lid-close actions are not changed in the game power plan.
 - A running game's memory is never read or written.

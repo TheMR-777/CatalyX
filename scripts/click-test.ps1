@@ -7,7 +7,7 @@
   Uses scratch data and a harmless stand-in game (a renamed copy of ping.exe) with every boost step switched
   off, so nothing on this PC is changed. The window is brought to the front and the mouse really moves, so
   leave the machine alone while it runs (about 20 seconds per look). Screenshots of each stage go to a temp
-  folder. The click positions assume the default 1180x760 window and the layouts in src/gui/control.rs; if you
+  folder. The click positions assume the default 1180x760 window and the layouts in skins/classic/src/gui/control.rs; if you
   move those, update the coordinates below.
 
   Exit code 0 = passed for every look tested, 1 = something failed.

@@ -193,11 +193,12 @@ pub enum Intent {
         key: String,
         value: String,
     },
-    /// A look preference of the skin. Until Phase 1b moves them under `skins.<name>`, the classic
-    /// skin's five look fields live in the config, so the core only checks that a value is one it
-    /// knows how to store.
+    /// One of the skin's own preferences, saved under `skins.<skin>` (`docs/SKINS.md`). `skin` is the
+    /// name the skin declares for itself, so two skins never read each other's choices; the core
+    /// stores the value without ever looking at what it means.
     SetPref {
-        key: String,
+        skin: &'static str,
+        key: &'static str,
         value: String,
     },
 }

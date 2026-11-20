@@ -61,7 +61,7 @@ is real work (the engine, which restores after the game closes, already had its 
 ## The boost control
 
 **One control, three looks, one state.** The launch bar, the gauge and the power ring share a `Ctl` state and
-`Act` actions (`src/gui/control.rs`), so they cannot drift apart. It was chosen from 13 mocked ideas (an
+`Act` actions (`skins/classic/src/gui/control.rs`), so they cannot drift apart. It was chosen from 13 mocked ideas (an
 interactive gallery was reviewed before any code was written).
 
 **The boosted state is the accent, never a fixed hue.** A fixed green ignored the person's theme. Green is kept
@@ -90,7 +90,7 @@ while a game runs, with a thermal guard. `src/gpu.rs`.
 ## Identity
 
 **CatalyX** (a catalyst speeds a reaction up and comes out unchanged). The mark is an X woven from two strokes:
-the rising "/" in the accent over the "\" with a gap where they cross (`src/gui/mark.rs`; one geometry for the
+the rising "/" in the accent over the "\" with a gap where they cross (`skins/classic/src/gui/mark.rs`; one geometry for the
 title-bar tile, the window icon and the `.ico`). Display name `CatalyX`, command and crate `catalyx`. It was called
 PureBoost first; that name is gone from the program (no folder copy, no task renaming, no `pureboost` aliases),
 because nothing released under it is supported (see Compatibility).
@@ -112,6 +112,14 @@ migrate from, so the pre-alpha builds do not promise to read each other's data. 
 not the current one is set aside and a fresh default is used, instead of being upgraded through a chain of
 migrations: `Config::load` moves such a file to `config.json.old` (its bytes kept, never destroyed). The
 PureBoost-era folder, scheduled-task names, env var and process names are gone (redesign step S2).
+
+**A skin's look choices are the skin's data** (redesign step S5). The classic skin's five look fields (theme, mode,
+accent, tint, boost-control style) moved from the top-level config into `skins.classic`, a plain
+name -> value map the core stores and never interprets: reading a value, defaulting it and validating it all
+happen in the skin (`skins/classic/src/gui/prefs.rs`). That is what makes the core free of any notion of a theme
+or an accent. No `CONFIG_VERSION` bump: a file without the block is a complete, valid file (the look simply
+starts at the skin's defaults), and the one real file that existed was edited by hand on this PC
+(`CatalyX-workbench/attic/config-before-skins.json` keeps its bytes).
 
 **The split is done by hand, not by migration code** (decided 2026-11-21). This program has exactly one user and
 one PC, so a restructuring costs one file moved on that machine, never a compatibility layer shipped to everyone

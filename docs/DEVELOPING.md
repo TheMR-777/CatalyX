@@ -7,12 +7,14 @@
 - Optional: an NVIDIA card to exercise the graphics features; administrator rights for the features that need
   them.
 
-## Two programs from one source
+## Two programs, three packages
 
-`src/lib.rs` is the program. `catalyx.exe` (`src/main.rs`) is a Windows *window* program (no console, so starting
-it never opens a terminal; typed in a terminal with a command it joins that terminal and prints there).
-`catalyx-cli.exe` (`src/bin/catalyx-cli.rs`) is the same code as a *console* program: use it in scripts, pipes and
-CI, because a shell waits for it and exit codes, redirects and Ctrl+C behave. Both are built by `cargo build`.
+One workspace, and the window is a skin over the core. `crates/catalyx-core/` is the program: everything except
+drawing (it links no egui). `app/src/main.rs` is a Windows *window* program (no console, so starting it never
+opens a terminal; typed in a terminal with a command it joins that terminal and prints there) and its one skin
+line calls `skins/classic/`. `catalyx-cli.exe` (`crates/catalyx-core/src/bin/catalyx-cli.rs`) is the same core
+as a *console* program: use it in scripts, pipes and CI, because a shell waits for it and exit codes, redirects
+and Ctrl+C behave. All three are built by `cargo build --release --workspace`.
 Start-up timing: set `CATALYX_TRACE=1` and read `%TEMP%\catalyx-startup.txt`.
 
 ## Build and check
@@ -24,7 +26,7 @@ cargo clippy --release           # must be clean: CI runs it with -D warnings
 cargo fmt --check                # rustfmt.toml: max_width 140, Unix newlines
 ```
 
-The tests cover what needs no Windows state: the config and its migration, the settings catalogue, intents
+The tests cover what needs no Windows state: the config and its version gate, the settings catalogue, intents
 (including stale ids), the tagged activity log, the status cell's "notify once per change" rule, and the
 snapshot sharing contract - `procs::latest` hands out the same `Arc<Snapshot>`, never a copy, and a reader's
 sample cannot change under it.
@@ -95,6 +97,6 @@ A pushed tag `vX.Y.Z` runs `.github/workflows/release.yml`, which builds `cataly
 and attaches them with their SHA-256 files; the script does the waiting and the verifying.
 ## Regenerating assets
 
-- **Icon:** edit the geometry in `src/gui/mark.rs`, build, then
+- **Icon:** edit the geometry in `skins/classic/src/gui/mark.rs`, build, then
   `.\target\release\catalyx.exe --write-icon assets\catalyx.ico` and build again (the build embeds the file).
 - **Screenshots** in `docs/screenshots` are produced with `--screenshot` as above.

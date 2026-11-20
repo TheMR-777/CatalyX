@@ -33,13 +33,12 @@ have not been checked elsewhere.
 
 ## In progress
 
-- **Headless core, one compile-time skin** (see [DECISIONS.md](DECISIONS.md)). Phase 1, with no visible change:
-  move the app logic that lives in `src/gui` into a core with a view/intent API (the window currently writes the
-  config directly in about 46 places, and re-implements the watcher's auto-boost and game learning); generate the
-  CLI's setting keys, the Profiles toggles and the plan lines from one settings table; split into a workspace
-  (`crates/catalyx-core`, `skins/classic`, `app`) where the core's Windows modules are private to it. Done only when
-  screenshots match, the checks pass, and size, footprint and start-up are no worse. Then: a new skin, designed
-  from mock-ups first.
+- **Headless core, one compile-time skin** (see [DECISIONS.md](DECISIONS.md)). Phase 1b, step by step, with no
+  visible change: the app logic already lives in the core behind a view/intent API, the settings catalogue drives
+  the CLI, the Profiles form and the plan lines, and the workspace is `crates/catalyx-core`, `skins/classic` and
+  `app` with the core's Windows modules private to it (step S4). The classic skin's look choices moved under
+  `skins.classic`, where the core never reads them (step S5). Left: one deliberate screenshot re-baseline and the
+  docs for the new layout (step S6). Then: a new skin, designed from mock-ups first.
 
 ## Ideas (not decided)
 

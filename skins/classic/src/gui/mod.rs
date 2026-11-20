@@ -15,6 +15,7 @@ mod control;
 mod icons;
 pub mod mark;
 mod pages;
+pub mod prefs;
 mod theme;
 mod widgets;
 
@@ -134,20 +135,22 @@ impl CatalyxApp {
             (opts.theme.clone(), opts.appearance.clone(), opts.control.clone(), opts.accent.clone());
         let dialog_boost = opts.dialog.as_deref() == Some("boost");
         let prepare = move |cfg: &mut Config| {
+            // Check-run look flags are this skin's preferences like any other: they go through the
+            // same keys the Settings page writes, and the run never saves them.
             if let Some(t) = &theme_o {
-                cfg.theme = ThemeId::from_key(t).key().to_string();
+                cfg.set_pref(prefs::NAME, prefs::THEME, ThemeId::from_key(t).key());
             }
             if let Some(a) = &appearance_o {
-                cfg.appearance = a.to_lowercase();
+                cfg.set_pref(prefs::NAME, prefs::APPEARANCE, prefs::Appearance::from_key(a).key());
             }
             if dialog_boost {
                 cfg.onboarded = true;
             }
             if let Some(c) = &control_o {
-                cfg.boost_control = control::Style::from_key(c).key().to_string();
+                cfg.set_pref(prefs::NAME, prefs::CONTROL, control::Style::from_key(c).key());
             }
             if let Some(a) = &accent_o {
-                cfg.accent = AccentId::from_key(a).key().to_string();
+                cfg.set_pref(prefs::NAME, prefs::ACCENT, AccentId::from_key(a).key());
             }
         };
         let core = Core::start(CoreOptions {
@@ -280,19 +283,16 @@ impl CatalyxApp {
     }
 
     pub fn dark_mode(&self) -> bool {
-        match self.v.config.appearance.as_str() {
-            "light" => false,
-            "system" => self.sys_dark,
-            _ => true,
+        match self.look().appearance {
+            prefs::Appearance::Light => false,
+            prefs::Appearance::System => self.sys_dark,
+            prefs::Appearance::Dark => true,
         }
     }
 
-    pub fn theme_id(&self) -> ThemeId {
-        ThemeId::from_key(&self.v.config.theme)
-    }
-
-    pub fn accent_id(&self) -> AccentId {
-        AccentId::from_key(&self.v.config.accent)
+    /// The look this skin is wearing, read from its own saved preferences (`skins.classic`).
+    pub fn look(&self) -> prefs::Prefs {
+        prefs::Prefs::from_config(&self.v.config)
     }
 
     pub fn pal(&self) -> theme::Palette {
@@ -347,7 +347,8 @@ impl CatalyxApp {
     }
 
     fn apply_theme_if_needed(&mut self) {
-        let key = (self.theme_id(), self.accent_id(), self.v.config.tint, self.dark_mode());
+        let look = self.look();
+        let key = (look.theme, look.accent, look.tint, self.dark_mode());
         if self.palette_key != Some(key) {
             theme::apply(&self.ctx, &theme::palette(key.0, key.1, key.2, key.3));
             self.palette_key = Some(key);
@@ -404,7 +405,7 @@ impl eframe::App for CatalyxApp {
         }
         // Follow Windows' light/dark choice. Only this mode needs asking again, so only it asks for
         // a frame: everything else is woken by the core when there is something new.
-        if self.v.config.appearance == "system" {
+        if self.look().appearance == prefs::Appearance::System {
             let now = Instant::now();
             if now.duration_since(self.last_sys_check) > Duration::from_secs(3) {
                 self.last_sys_check = now;

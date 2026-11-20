@@ -122,7 +122,7 @@ pub fn click_act(c: &Ctl) -> Option<Act> {
 
 impl CatalyxApp {
     pub fn control_style(&self) -> Style {
-        Style::from_key(&self.v.config.boost_control)
+        self.look().control
     }
 
     /// Carries out what the control asked for.

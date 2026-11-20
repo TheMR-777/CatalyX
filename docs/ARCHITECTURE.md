@@ -81,7 +81,9 @@ change), then make the change, and `forget_last_undo()` if it fails. Add the mat
 `%APPDATA%\CatalyX\config.json`, carrying `CONFIG_VERSION`. There are no migrations: a file with another version
 is moved to `config.json.old` and defaults are used (`config::Config::load`), so a reader never half-understands
 an older shape. Presets are `Settings` bundles; a game either follows a preset or carries its own `custom`
-settings plus per-game app/service overrides. `CATALYX_DATA` points everything (config, journal, caches) at a
+settings plus per-game app/service overrides. Each skin's look choices live in `skins.<skin>` (a plain map the
+core stores and never interprets, `docs/SKINS.md`); the classic skin's five fields moved there at the same
+version, so a file without them simply loads with that skin's defaults. `CATALYX_DATA` points everything (config, journal, caches) at a
 scratch folder; the built-in checks and the tests always use it.
 
 ## The window
@@ -98,7 +100,8 @@ scratch folder; the built-in checks and the tests always use it.
   trim, and putting a boost back before the window closes.
 - **Theme**: `theme::palette(look, accent, tint, dark)` blends a look (Focus/Slate/Mica), an accent colour and a
   tint strength. Layout uses an 8-point grid; see AGENTS.md for the design rules.
-- **The mark** (`gui/mark.rs`) is one geometry used for the title-bar tile, the window icon and the `.ico`.
+- **The mark** (`skins/classic/src/gui/mark.rs`) is one geometry used for the title-bar tile, the window icon and
+  the `.ico`; `app/build.rs` embeds that `.ico` as the program's own icon.
 
 ## Check runs
 

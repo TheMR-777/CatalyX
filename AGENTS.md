@@ -83,24 +83,27 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
 
 ## Adding a setting
 
-1. `src/config/settings.rs`: field on `Settings` (+ doc comment) and its value in `impl Default for Settings`.
-2. `src/config/presets.rs`: its value in Gentle and Max Squeeze (Balanced uses the default).
+1. `crates/catalyx-core/src/config/settings.rs`: field on `Settings` (+ doc comment) and its value in
+   `impl Default for Settings`.
+2. `crates/catalyx-core/src/config/presets.rs`: its value in Gentle and Max Squeeze (Balanced uses the default).
 3. Saved files: new fields need `#[serde(default)]` (the struct has it). There is **no migration chain**
    (docs/DECISIONS.md, Compatibility): bump `CONFIG_VERSION` when the saved shape changes in a way a reader must
    not guess at, and a file with any other version is set aside (`config.json.old`) with defaults used. Never
    overwrite a person's own presets or per-game settings.
-4. `src/selftest.rs`: it builds a `Settings` literal; add the field.
-5. `src/app/spec.rs`: one row in `SETTINGS` (key, label, hint, group, administrator need, CLI order, help position,
+4. `skins/classic/src/selftest.rs`: it builds a `Settings` literal; add the field.
+5. `crates/catalyx-core/src/app/spec.rs`: one row in `SETTINGS` (key, label, hint, group, administrator need, CLI order, help position,
    kind). The CLI's `show`/`set`, the `help` KEYS block and the classic Profiles form read it; do not list the
    setting anywhere else. A new CLI token or alias also belongs in that row: `spec::set` is the only parser for both
    the CLI and the window. App options (the Settings page and `catalyx option`) are one `OPTIONS` row in the same file.
-6. `src/app/boost.rs`: a line in `plan()` (and its test).
-7. `src/engine/`: apply it (rule 1) and undo it.
+6. `crates/catalyx-core/src/app/boost.rs`: a line in `plan()` (and its test).
+7. `crates/catalyx-core/src/engine/`: apply it (rule 1) and undo it.
 8. Docs: `docs/HOW-IT-WORKS.md` (and `docs/CLI.md` if the help text changed).
 
 ## The boost control
 
 A boost is started from exactly one place, `gui/control.rs`, in one of three looks (bar, gauge, ring) that share a Ctl state and the Act actions. Do not start a boost from anywhere else in the window: go through `request_boost` (it shows the summary dialog unless the person turned it off) and `restore` (never confirms). A new look is a new function that takes &Ctl and returns Option<Act>; add its key to `Style`, the Settings row and the CLI `theme` tokens. Boosted colours come from the palette accent, never a fixed hue.
+
+The five look choices (theme, mode, accent, tint, boost-control style) are the skin's own: `skins/classic/src/gui/prefs.rs` is the only place their keys, defaults and validation live, and they are saved under `skins.classic` in the config. The core stores that map and reads none of it, so a look setting never touches `crates/catalyx-core`.
 
 The plan lines, stages, progress estimate and notices come from `src/app/boost.rs` through `View::boost`; the skin draws them and owns only its own wording and looks. Do not re-derive them in a page.
 

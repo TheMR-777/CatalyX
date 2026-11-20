@@ -58,18 +58,11 @@ pub struct Config {
     pub run_as_admin: bool,
     pub gpu_temp_limit_c: u32,
     pub selected_game: usize,
-    /// Look: "focus", "slate" or "mica".
-    pub theme: String,
-    /// "dark", "light" or "system" (follow Windows).
-    pub appearance: String,
-    /// Accent colour: "default" (the look's own) or one of ACCENT_KEYS.
-    #[serde(default = "default_accent")]
-    pub accent: String,
-    /// How much of the accent bleeds into the surfaces: 0 off, 1 subtle, 2 rich.
-    #[serde(default = "default_tint")]
-    pub tint: u8,
-    /// The look of the boost control: "bar" (launch bar), "gauge" or "ring" (see gui/control.rs).
-    pub boost_control: String,
+    /// Each skin's own preferences: `skins.<skin>.<key>` -> value. The core stores what a skin
+    /// sends and reads none of it: what a look, an accent or a boost control is belongs to the skin
+    /// (docs/SKINS.md). Missing means the skin's own default, so an older file always loads.
+    #[serde(default)]
+    pub skins: Skins,
     /// Show a summary of what will change before a boost starts. The summary has a "don't ask again" box.
     pub confirm_boost: bool,
     /// The settings version the file was written with; a file with any other version is not read.
@@ -99,31 +92,15 @@ impl Default for Config {
             run_as_admin: true,
             gpu_temp_limit_c: 83,
             selected_game: 0,
-            theme: "focus".into(),
-            appearance: "dark".into(),
-            accent: default_accent(),
-            tint: default_tint(),
-            boost_control: BOOST_CONTROL_KEYS[0].into(),
+            skins: Skins::new(),
             confirm_boost: true,
             version: CONFIG_VERSION,
         }
     }
 }
 
-fn default_accent() -> String {
-    "default".into()
-}
-
-fn default_tint() -> u8 {
-    1
-}
-
-/// The accent colours a person can pick (besides default, the look's own). The colours
-/// themselves live with the theme code in gui/theme.rs.
-pub const ACCENT_KEYS: [&str; 8] = ["periwinkle", "ember", "copper", "rose", "sage", "ocean", "violet", "gold"];
-
-/// The looks the boost control can have; the first is the default.
-pub const BOOST_CONTROL_KEYS: [&str; 3] = ["bar", "gauge", "ring"];
+/// One skin's preferences, then every skin's: a plain map, because the core must not know the keys.
+pub type Skins = BTreeMap<String, BTreeMap<String, String>>;
 
 /// Where settings, the recovery journal and caches live: `%APPDATA%\CatalyX`.
 /// `CATALYX_DATA` points check runs and tests at a scratch folder.
@@ -261,6 +238,17 @@ impl Config {
         map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| *v)
     }
 
+    /// One preference a skin has saved, if it has ever set it (`None` = still the skin's default).
+    pub fn pref(&self, skin: &str, key: &str) -> Option<&str> {
+        self.skins.get(skin)?.get(key).map(String::as_str)
+    }
+
+    /// Stores one preference of one skin. The skin validates the value first; the core keeps it
+    /// verbatim, so it never needs to learn what any key means.
+    pub fn set_pref(&mut self, skin: &str, key: &str, value: &str) {
+        self.skins.entry(skin.to_string()).or_default().insert(key.to_string(), value.to_string());
+    }
+
     pub fn save(&self) {
         if let Ok(s) = serde_json::to_string_pretty(self) {
             let tmp = Self::path().with_extension("json.tmp");
@@ -350,6 +338,27 @@ mod tests {
         assert_eq!(read.services.get("MapsBroker"), Some(&true));
         assert_eq!(read.selected_game, 0, "the remembered game is clamped to the library");
         assert_eq!(read.selected().map(|g| g.name.as_str()), Some("One"));
+    }
+
+    #[test]
+    fn a_file_without_skin_preferences_still_loads() {
+        // The classic skin's look moved from top-level fields to `skins.classic` without a version
+        // bump: a file written before that reads at once, and the skin uses its own defaults.
+        let text = format!(r#"{{"version": {CONFIG_VERSION}, "theme": "focus", "accent": "ember"}}"#);
+        let c = Config::from_json(&text).expect("a current-version file is read");
+        assert!(c.skins.is_empty());
+        assert_eq!(c.pref("classic", "accent"), None);
+    }
+
+    #[test]
+    fn skin_preferences_are_stored_per_skin() {
+        let mut c = Config::default();
+        c.set_pref("classic", "accent", "ember");
+        c.set_pref("classic", "tint", "0");
+        let read = Config::from_json(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(read.pref("classic", "accent"), Some("ember"));
+        assert_eq!(read.pref("classic", "tint"), Some("0"));
+        assert_eq!(read.pref("another", "accent"), None, "a skin never reads another skin's choices");
     }
 
     #[test]

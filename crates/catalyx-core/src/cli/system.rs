@@ -2,6 +2,26 @@
 
 use super::*;
 
+/// The classic skin's look preferences, as the command line names them. No skin is linked into
+/// `catalyx-cli.exe`, so this one command carries that skin's keys and shipped defaults; a second
+/// skin replaces it (docs/SKINS.md). The values live in the config under `skins.classic`.
+const SKIN: &str = "classic";
+const ACCENTS: [&str; 8] = ["periwinkle", "ember", "copper", "rose", "sage", "ocean", "violet", "gold"];
+
+/// The look line `theme` prints, with the skin's defaults for anything never set.
+fn look(cfg: &Config) -> String {
+    let get = |key: &str, default: &str| cfg.pref(SKIN, key).unwrap_or(default).to_string();
+    let tint = get("tint", "1").parse::<u8>().unwrap_or(1).min(2);
+    format!(
+        "Theme: {}   Mode: {}   Accent: {}   Tint: {}   Boost control: {}",
+        get("theme", "focus"),
+        get("appearance", "dark"),
+        get("accent", "default"),
+        ["off", "subtle", "rich"][tint as usize],
+        get("boost_control", "bar")
+    )
+}
+
 impl Cli {
     pub(super) fn plans(&self) -> Result<(), String> {
         let plans = power::list();
@@ -123,40 +143,29 @@ impl Cli {
         Ok(())
     }
 
+    /// `catalyx theme`: the classic skin's five look preferences, stored under `skins.classic`
+    /// (`docs/SKINS.md`). No skin is linked into the command line program, so this one command
+    /// carries that skin's keys and its shipped defaults; a second skin replaces it.
     pub(super) fn theme(&self) -> Result<(), String> {
         let mut cfg = Config::load();
         if self.pos.len() < 2 {
-            println!(
-                "Theme: {}   Mode: {}   Accent: {}   Tint: {}   Boost control: {}",
-                cfg.theme,
-                cfg.appearance,
-                cfg.accent,
-                ["off", "subtle", "rich"][(cfg.tint as usize).min(2)],
-                cfg.boost_control
-            );
+            println!("{}", look(&cfg));
             return Ok(());
         }
         for a in &self.pos[1..] {
             match a.to_lowercase().as_str() {
-                t @ ("focus" | "slate" | "mica") => cfg.theme = t.into(),
-                m @ ("dark" | "light" | "system") => cfg.appearance = m.into(),
-                a if a == "default" || config::ACCENT_KEYS.contains(&a) => cfg.accent = a.into(),
-                "tint-off" => cfg.tint = 0,
-                "tint-subtle" => cfg.tint = 1,
-                "tint-rich" => cfg.tint = 2,
-                c @ ("bar" | "gauge" | "ring") => cfg.boost_control = c.into(),
-                o => return Err(format!("unknown theme, mode or accent '{o}' (looks: focus slate mica; modes: dark light system; accents: default {}; tint-off tint-subtle tint-rich; boost control: bar gauge ring)", config::ACCENT_KEYS.join(" "))),
+                t @ ("focus" | "slate" | "mica") => cfg.set_pref(SKIN, "theme", t),
+                m @ ("dark" | "light" | "system") => cfg.set_pref(SKIN, "appearance", m),
+                a if a == "default" || ACCENTS.contains(&a) => cfg.set_pref(SKIN, "accent", a),
+                "tint-off" => cfg.set_pref(SKIN, "tint", "0"),
+                "tint-subtle" => cfg.set_pref(SKIN, "tint", "1"),
+                "tint-rich" => cfg.set_pref(SKIN, "tint", "2"),
+                c @ ("bar" | "gauge" | "ring") => cfg.set_pref(SKIN, "boost_control", c),
+                o => return Err(format!("unknown theme, mode or accent '{o}' (looks: focus slate mica; modes: dark light system; accents: default {}; tint-off tint-subtle tint-rich; boost control: bar gauge ring)", ACCENTS.join(" "))),
             }
         }
         cfg.save();
-        println!(
-            "Theme: {}   Mode: {}   Accent: {}   Tint: {}   Boost control: {}",
-            cfg.theme,
-            cfg.appearance,
-            cfg.accent,
-            ["off", "subtle", "rich"][(cfg.tint as usize).min(2)],
-            cfg.boost_control
-        );
+        println!("{}", look(&cfg));
         Ok(())
     }
 

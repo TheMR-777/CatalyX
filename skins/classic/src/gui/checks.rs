@@ -15,7 +15,8 @@ impl CatalyxApp {
                 }
                 let (t, dark) = steps[self.tour_step];
                 self.tab = t;
-                self.send(Intent::SetPref { key: "appearance".into(), value: if dark { "dark" } else { "light" }.into() });
+                let look = if dark { prefs::Appearance::Dark } else { prefs::Appearance::Light };
+                self.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: look.key().into() });
             }
             if self.frames % SETTLE == SETTLE - 2 && !self.shot_requested {
                 self.shot_requested = true;
