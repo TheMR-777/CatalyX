@@ -338,11 +338,22 @@ impl CatalyxApp {
         }
     }
 
+    /// A check run (screenshot, tour or self-test) photographs a fixed frame.
+    fn checking(&self) -> bool {
+        self.opts.screenshot.is_some() || self.opts.tour.is_some() || self.opts.selftest.is_some()
+    }
+
     fn apply_theme_if_needed(&mut self) {
         let key = (self.theme_id(), self.accent_id(), self.v.config.tint, self.dark_mode());
         if self.palette_key != Some(key) {
             theme::apply(&self.ctx, &theme::palette(key.0, key.1, key.2, key.3));
             self.palette_key = Some(key);
+            // A check run captures a fixed frame, so nothing may still be moving when it does: a
+            // fading scroll bar made the same build photograph differently from one run to the
+            // next, and a golden image that changes on its own is not a golden image.
+            if self.checking() {
+                self.ctx.all_styles_mut(|s| s.animation_time = 0.0);
+            }
         }
     }
 }

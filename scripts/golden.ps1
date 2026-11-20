@@ -55,15 +55,25 @@ function Invoke-Capture([string]$dir) {
   $tmp = Join-Path $env:TEMP 'catalyx-golden-tmp'
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $tmp | Out-Null
   New-Item -ItemType Directory -Force $dir | Out-Null
-  foreach ($s in $shots) {
-    $png = Join-Path $tmp "$($s[0]).png"
-    $a = @('--screenshot', $png, '--tab', $s[1], '--size', $s[2], '--accent', $s[3], '--appearance', $s[4], '--control', $s[5], '--no-elevate') + $s[6]
-    $p = Start-Process $exe -ArgumentList $a -PassThru
-    if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "$($s[0]): the capture did not finish" }
-    Start-Sleep -Milliseconds 300
-    if (-not (Test-Path $png)) { throw "$($s[0]): no image was written" }
-    Copy-Item $png (Join-Path $dir "$($s[0]).png") -Force
-    Write-Host ("  captured {0}" -f $s[0])
+  # The pointer is part of the picture: whichever button it rests on is lit, and a lit button made the
+  # same build photograph differently from one run to the next. Park it on the screen edge for the
+  # whole run and put it back afterwards, so two captures of one build are the same picture.
+  Add-Type -AssemblyName System.Windows.Forms
+  $pointer = [System.Windows.Forms.Cursor]::Position
+  try {
+    [System.Windows.Forms.Cursor]::Position = [System.Drawing.Point]::new(0, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height - 1)
+    foreach ($s in $shots) {
+      $png = Join-Path $tmp "$($s[0]).png"
+      $a = @('--screenshot', $png, '--tab', $s[1], '--size', $s[2], '--accent', $s[3], '--appearance', $s[4], '--control', $s[5], '--no-elevate') + $s[6]
+      $p = Start-Process $exe -ArgumentList $a -PassThru
+      if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "$($s[0]): the capture did not finish" }
+      Start-Sleep -Milliseconds 300
+      if (-not (Test-Path $png)) { throw "$($s[0]): no image was written" }
+      Copy-Item $png (Join-Path $dir "$($s[0]).png") -Force
+      Write-Host ("  captured {0}" -f $s[0])
+    }
+  } finally {
+    [System.Windows.Forms.Cursor]::Position = $pointer
   }
   Write-Host "Captured $($shots.Count) image(s) into $dir" -ForegroundColor Green
 }

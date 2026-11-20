@@ -76,6 +76,7 @@ real settings (they use scratch data) and exit non-zero on failure.
 | `scripts\check.ps1` | **Every check in one command**: format, clippy (warnings denied), tests, build, "the window program really is a window program", version consistency, then the real-window self-test and a start-up check. `-Quick` skips the last two. |
 | `scripts\release.ps1` | **Ships a release**: preconditions, `check.ps1`, push, wait for CI, tag, wait for the release build, then verify the published files (checksums, subsystems, version) and apply `docs\releases\<version>.md`. `-DryRun` stops before pushing. |
 | `scripts\screenshots.ps1` | Re-shoots every image in `docs/screenshots` the same way every time (demo data, steady meters). `-Only gauge` for one. |
+| `scripts\golden.ps1` | Golden screenshots for refactors that must not change the look: `-Capture <dir>`, then `-Compare <golden dir>, <new dir>` (`-Strict` also fails on the live pages). A check run freezes animation and the script parks the pointer for the run, so two captures of one build are the same picture and a diff is a real diff. |
 | `scripts\click-test.ps1` | Drives the **real window with the real mouse**: click the boost control, confirm the summary, game starts, Restore. `-Control all` for the three looks. Leave the PC alone while it runs. |
 | `scripts\startup-profile.ps1` | Median start-up milestones over several launches (`CATALYX_TRACE`). |
 | `scripts\footprint.ps1` | Memory and CPU of a running program (see [FOOTPRINT.md](FOOTPRINT.md)). |
