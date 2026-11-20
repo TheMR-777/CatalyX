@@ -71,7 +71,8 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
    `CATALYX_DATA` scratch folders, stand-in games (a renamed copy of `ping.exe` outside the Windows folder),
    `--dry-run`. Never run a real game or a launcher with an anti-cheat driver.
 6. **Minimal footprint.** The window draws only on change, sampled readings share one draw cadence (2 s idle,
-   0.6 s while boosting) and nothing is drawn when minimised; no polling loops; think twice before adding a
+   0.6 s while boosting) and nothing is drawn when minimised; no polling loops; one monitor sample is shared as
+   an `Arc` (`procs::latest`/`publish`), so a reader never copies the process list; think twice before adding a
    dependency (the dependency list is short on purpose).
 7. **Do not commit** `research/`, `shots/`, `target/` (ignored; `research/` is a private working-notes folder that may
    exist on a maintainer's machine). Do not copy text, numbers or code from other products. Derive facts from

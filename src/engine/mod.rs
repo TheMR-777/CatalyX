@@ -131,12 +131,13 @@ impl Engine {
         }
     }
 
-    fn snapshot(&self) -> Snapshot {
-        self.snap.lock().map(|s| s.clone()).unwrap_or_default()
+    /// The latest monitor sample. An Arc clone, never a copy of the process list.
+    fn snapshot(&self) -> Arc<Snapshot> {
+        procs::latest(&self.snap)
     }
 
     /// Turns the per-process scan on and waits (up to limit) for a sample that really scanned.
-    fn fresh_snapshot(&self, limit: Duration) -> Snapshot {
+    fn fresh_snapshot(&self, limit: Duration) -> Arc<Snapshot> {
         procs::set_detail(true);
         let serial0 = self.snapshot().serial;
         let t = Instant::now();

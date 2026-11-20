@@ -24,6 +24,11 @@ cargo clippy --release           # must be clean: CI runs it with -D warnings
 cargo fmt --check                # rustfmt.toml: max_width 140, Unix newlines
 ```
 
+The tests cover what needs no Windows state: the config and its migration, the settings catalogue, intents
+(including stale ids), the tagged activity log, the status cell's "notify once per change" rule, and the
+snapshot sharing contract - `procs::latest` hands out the same `Arc<Snapshot>`, never a copy, and a reader's
+sample cannot change under it.
+
 Close CatalyX before building (Windows locks the running exe) and do not run two builds at once.
 
 ## The built-in checks (they drive the real window)

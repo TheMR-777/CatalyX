@@ -169,7 +169,7 @@ pub fn run(with_gpu: bool, json: bool) -> Result<(), String> {
                 let mut found: Option<procs::ProcInfo> = None;
                 while t.elapsed() < Duration::from_secs(12) {
                     std::thread::sleep(Duration::from_millis(500));
-                    let s = snap.lock().map(|s| s.clone()).unwrap_or_default();
+                    let s = procs::latest(&snap);
                     if s.serial < 2 {
                         continue;
                     }
@@ -185,7 +185,7 @@ pub fn run(with_gpu: bool, json: bool) -> Result<(), String> {
                             "PASS",
                             format!("started it, found the real program behind it: {} (pid {})", p.name, p.pid),
                         );
-                        let s = snap.lock().map(|s| s.clone()).unwrap_or_default();
+                        let s = procs::latest(&snap);
                         for q in s.procs.iter().filter(|q| q.pid == p.pid || q.pid == p.parent) {
                             if q.start + 3 >= started && (q.name_lower == "catalyx-testgame.exe" || q.name_lower == "cmd.exe") {
                                 procs::terminate(q.pid);

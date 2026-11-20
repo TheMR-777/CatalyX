@@ -62,7 +62,23 @@ impl Snapshot {
     }
 }
 
-pub type SharedSnapshot = Arc<Mutex<Snapshot>>;
+/// The latest monitor sample.
+///
+/// The cell holds an `Arc`, so a reader takes one Arc clone under a short lock instead of copying
+/// the whole process list, and the sampler never waits for a reader to finish copying.
+pub type SharedSnapshot = Arc<Mutex<Arc<Snapshot>>>;
+
+/// The latest sample. One lock, one Arc clone, whatever the machine is running.
+pub fn latest(shared: &SharedSnapshot) -> Arc<Snapshot> {
+    shared.lock().map(|s| Arc::clone(&s)).unwrap_or_default()
+}
+
+/// Replaces the sample. The monitor is the only writer in the program; the tests use it too.
+pub fn publish(shared: &SharedSnapshot, snap: Snapshot) {
+    if let Ok(mut s) = shared.lock() {
+        *s = Arc::new(snap);
+    }
+}
 
 static SAMPLE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1500);
 /// Whether the sampler scans every process. The window turns this off on screens that only show
@@ -218,7 +234,7 @@ pub fn cpu_base_mhz() -> u32 {
 
 /// Starts the background sampler. It refreshes the shared snapshot about every 1.5 seconds.
 pub fn start_monitor() -> SharedSnapshot {
-    let shared: SharedSnapshot = Arc::new(Mutex::new(Snapshot::default()));
+    let shared: SharedSnapshot = Arc::new(Mutex::new(Arc::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
         crate::trace::mark("TEMP monitor thread up");
@@ -327,9 +343,7 @@ pub fn start_monitor() -> SharedSnapshot {
                 cpu_base_mhz: base_mhz,
                 detailed,
             };
-            if let Ok(mut s) = out.lock() {
-                *s = snap;
-            }
+            publish(&out, snap);
             // Outside the snapshot lock: the hook may read the snapshot itself.
             if let Some(f) = ON_SAMPLE.get() {
                 f();
@@ -595,5 +609,67 @@ impl ClockProbe {
         let nominal = self.nominal.sample()?;
         let perf = self.perf.sample().filter(|p| *p > 5.0 && *p < 400.0).unwrap_or(100.0);
         Some((nominal * perf / 100.0).round() as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell(serial: u64) -> SharedSnapshot {
+        Arc::new(Mutex::new(Arc::new(Snapshot { serial, ..Default::default() })))
+    }
+
+    fn chain(links: &[(u32, u32)]) -> Snapshot {
+        Snapshot {
+            procs: links.iter().map(|&(pid, parent)| ProcInfo { pid, parent, ..Default::default() }).collect(),
+            serial: 1,
+            detailed: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_sample_is_handed_out_not_copied() {
+        let shared = cell(7);
+        let first = latest(&shared);
+        let second = latest(&shared);
+        assert_eq!(first.serial, 7);
+        // The same allocation, not two copies of the process list.
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(Arc::strong_count(&first), 3, "the cell plus the two readers");
+    }
+
+    #[test]
+    fn a_reader_keeps_the_sample_it_took_when_the_next_one_arrives() {
+        let shared = cell(7);
+        let taken = latest(&shared);
+        publish(&shared, Snapshot { serial: 8, ..Default::default() });
+        assert_eq!(taken.serial, 7, "a sample a reader holds can never change under it");
+        assert_eq!(latest(&shared).serial, 8);
+    }
+
+    #[test]
+    fn an_empty_cell_reads_as_an_empty_sample() {
+        let snap = latest(&cell(0));
+        assert!(snap.procs.is_empty(), "the command line reads this before the first sample");
+    }
+
+    #[test]
+    fn a_snapshot_finds_a_process_and_its_ancestors() {
+        // 1 started 2, which started 3.
+        let snap = chain(&[(1, 0), (2, 1), (3, 2)]);
+        assert_eq!(snap.find(2).map(|p| p.pid), Some(2));
+        assert!(snap.find(9).is_none());
+        assert!(snap.descends_from(3, 1), "a grandchild descends from its grandparent");
+        assert!(snap.descends_from(3, 3), "a process descends from itself");
+        assert!(!snap.descends_from(1, 3), "a parent does not descend from its child");
+    }
+
+    #[test]
+    fn free_memory_never_goes_below_zero() {
+        // Windows can report more used than total for a moment while it swaps.
+        let snap = Snapshot { mem_used: 900, mem_total: 500, ..Default::default() };
+        assert_eq!(snap.mem_free(), 0);
     }
 }

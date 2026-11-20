@@ -237,12 +237,12 @@ impl State {
             self.status_seen = Some(r);
             self.rev += 1;
         }
-        if let Ok(s) = self.snap.lock() {
-            if self.snap_seen != Some(s.serial) {
-                self.snap_view = Arc::new(s.clone());
-                self.snap_seen = Some(s.serial);
-                self.rev += 1;
-            }
+        // An Arc clone, not a copy: the view keeps the sample it drew from.
+        let snap = procs::latest(&self.snap);
+        if self.snap_seen != Some(snap.serial) {
+            self.snap_seen = Some(snap.serial);
+            self.snap_view = snap;
+            self.rev += 1;
         }
     }
 
@@ -959,7 +959,7 @@ mod tests {
     fn state() -> (State, Receiver<Cmd>) {
         let (tx, rx) = channel();
         let status = Arc::new(StatusCell::new(Status::default()));
-        let snap = Arc::new(Mutex::new(Snapshot::default()));
+        let snap = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
         (State::new(Config::default(), true, false, false, tx, status, snap, false), rx)
     }
 
@@ -1172,9 +1172,9 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &st.view().boost), "a second frame reuses the boost view");
 
         // A monitor sample is not a boost input: it must not rebuild the plan.
-        if let Ok(mut s) = st.snap.lock() {
-            s.serial += 1;
-        }
+        let mut next = (*procs::latest(&st.snap)).clone();
+        next.serial += 1;
+        procs::publish(&st.snap, next);
         assert!(Arc::ptr_eq(&first, &st.view().boost), "a sample does not rebuild the plan");
 
         // Any config edit rebuilds it: deciding which fields a plan reads would be fragile, and the

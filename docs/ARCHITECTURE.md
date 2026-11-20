@@ -37,13 +37,19 @@ build.rs             embeds assets/catalyx.ico as the program icon (no SDK resou
 |---|---|
 | UI thread | draws the window; sends commands; reads status |
 | **Engine thread** | owns the boost session: applies changes, journals them, watches the game, restores |
-| Monitor thread | samples processes, memory, CPU, GPU on an adaptive interval (2.5 s normal, 8 s minimised, 1.5 s while boosting or on the Apps page) |
+| Monitor thread | samples processes, memory, CPU, GPU on an adaptive interval (2.5 s normal, 8 s minimised, 1.5 s while boosting or on the Apps page), and publishes each sample as an `Arc<Snapshot>` |
 | Hotkey thread | exists only while the desktop is off; listens for Ctrl+Alt+End |
 | Guard process | `catalyx shell-guard <pid>`; exists only while the desktop is off |
 | Watcher process | `catalyx watch`; optional; its own engine, no window |
 
 The UI and the engine talk through a channel (`Cmd`: `Boost`, `Restore`, `ExitQuietDesktop`) and a shared
 `Status` (phase, counts, activity log, pending-journal flag). The window never changes Windows itself.
+
+A monitor sample is shared as an `Arc<Snapshot>` (`procs::latest` / `procs::publish`): a reader takes one
+Arc clone under a short lock, so reading never copies the process list and never keeps the sampler waiting
+while a few hundred rows are duplicated. A sample a reader holds cannot change under it; the next one is a
+new allocation. That is what makes it safe for the engine to hold a sample across a long Windows call while
+the window keeps drawing, and it is asserted in `procs.rs`'s tests.
 
 ## The engine
 

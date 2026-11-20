@@ -88,7 +88,7 @@ impl Cli {
             Some(q) => {
                 let t = Instant::now();
                 loop {
-                    let s = snap.lock().map(|s| s.clone()).unwrap_or_default();
+                    let s = procs::latest(&snap);
                     if s.serial >= 1 || t.elapsed() > Duration::from_secs(8) {
                         let ql = q.to_lowercase();
                         let ql = ql.trim_end_matches(".exe").to_string();
@@ -235,7 +235,7 @@ impl Cli {
         let snap = procs::start_monitor();
         let t = Instant::now();
         let s = loop {
-            let s = snap.lock().map(|s| s.clone()).unwrap_or_default();
+            let s = procs::latest(&snap);
             if s.serial >= 2 || t.elapsed() > Duration::from_secs(5) {
                 break s;
             }

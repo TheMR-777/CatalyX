@@ -210,7 +210,7 @@ mod tests {
     fn state() -> State {
         let (tx, _rx) = channel();
         let status = Arc::new(StatusCell::new(Status::default()));
-        let snap = Arc::new(Mutex::new(Snapshot::default()));
+        let snap = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
         State::new(Config::default(), true, false, false, tx, status, snap, false)
     }
 
