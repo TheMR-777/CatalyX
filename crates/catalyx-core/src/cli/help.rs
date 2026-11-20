@@ -59,7 +59,7 @@ const AFTER_OPTIONS: &str = "  heat-limit <75|80|83|87>               GPU temper
 ";
 
 /// The full help text as one string (the option list and the KEYS block are generated).
-pub(super) fn text() -> String {
+pub fn text() -> String {
     format!(
         "{BEFORE_OPTIONS}  {:<39}{}\n{AFTER_OPTIONS}KEYS for `set`\n{}\nGames and presets can be given by name (any unique part), id or number from `games`.\n",
         "option <name> <on|off>",

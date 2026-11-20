@@ -48,12 +48,15 @@ $win = Join-Path $root 'target\release\catalyx.exe'
 $cli = Join-Path $root 'target\release\catalyx-cli.exe'
 
 Step 'format'  { cargo fmt --check }
-Step 'clippy'  { cargo clippy --release -- -D warnings }
+Step 'clippy'  { cargo clippy --release --workspace --all-targets -- -D warnings }
 Step 'tests' {
-  $o = cargo test --release 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0) { $o } else { ($o -split "`n" | Select-String 'test result' | Select-Object -First 1).Line }
+  $o = cargo test --release --workspace 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { $o } else {
+    # One line per crate that has tests, so a crate that stopped being tested is visible here.
+    ($o -split "`n" | Select-String 'test result: ok\. [1-9]' | ForEach-Object { $_.Line.Trim() }) -join ' | '
+  }
 }
-Step 'build'   { cargo build --release }
+Step 'build'   { cargo build --release --workspace }
 
 Step 'subsystems' {
   $w = Subsystem $win; $c = Subsystem $cli

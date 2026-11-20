@@ -1,13 +1,13 @@
 //! Services: choose which Windows background services pause while you play. Each is stopped the
 //! gentlest way Windows offers (dependents first, short time limit) and started again afterwards.
 
-use crate::app::Intent;
-use crate::catalog::{self, Impact};
-use crate::config::service_is_protected;
 use crate::gui::icons::{self, Ico};
 use crate::gui::pages::Confirm;
 use crate::gui::widgets::*;
 use crate::gui::CatalyxApp;
+use catalyx_core::app::Intent;
+use catalyx_core::catalog::{self, Impact};
+use catalyx_core::config::service_is_protected;
 use egui::{pos2, vec2, Align, Align2, FontId, Layout, Rect, RichText, ScrollArea, Ui};
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ fn effective(app: &CatalyxApp, game: Option<usize>, name: &str) -> bool {
 }
 
 /// The scope as an id: the page keeps its picker as an index, the core names games by id.
-fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<crate::app::GameId> {
+fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<catalyx_core::app::GameId> {
     game.and_then(|i| app.v.config.games.get(i)).map(|g| g.id.clone())
 }
 
@@ -127,7 +127,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, _w: f32) {
     let f = app.ui.svc.filter.trim().to_lowercase();
     let view = app.ui.svc.view;
     let all = app.v.services.clone();
-    let mut rows: Vec<&crate::services::ServiceInfo> = all
+    let mut rows: Vec<&catalyx_core::services::ServiceInfo> = all
         .iter()
         .filter(|s| {
             let by_view = match view {
@@ -162,7 +162,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, _w: f32) {
     });
 }
 
-fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &crate::services::ServiceInfo, game: Option<usize>, width: f32, h: f32) {
+fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &catalyx_core::services::ServiceInfo, game: Option<usize>, width: f32, h: f32) {
     let p = app.pal();
     let (rect, _) = flat_row(ui, width, h);
     let on = effective(app, game, &s.name);

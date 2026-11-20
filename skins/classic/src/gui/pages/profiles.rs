@@ -1,12 +1,12 @@
 //! Profiles: global presets (Gentle, Balanced, Max Squeeze and your own) and per-game settings.
 //! A game follows a preset until you give it its own settings.
 
-use crate::app::spec::{self, Group, Kind, Spec, Value};
-use crate::app::Intent;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget};
+use catalyx_core::app::spec::{self, Group, Kind, Spec, Value};
+use catalyx_core::app::Intent;
 use egui::{vec2, Align, Layout, ScrollArea, Sense, Stroke, Ui};
 
 pub struct ProfUi {
@@ -16,7 +16,7 @@ pub struct ProfUi {
 impl Default for ProfUi {
     fn default() -> Self {
         // The fine default the window has always started on; `show` moves it if it is ever absent.
-        ProfUi { target: EditTarget::Preset(crate::config::PRESET_BALANCED.to_string()) }
+        ProfUi { target: EditTarget::Preset(catalyx_core::config::PRESET_BALANCED.to_string()) }
     }
 }
 
@@ -25,8 +25,8 @@ pub fn show(app: &mut CatalyxApp, ui: &mut Ui) {
     let cfg = app.v.config.clone();
     // A removed game or preset must not leave a dangling target; with ids that is a lookup.
     let fallback = || {
-        let id = if cfg.presets.iter().any(|p| p.id == crate::config::PRESET_BALANCED) {
-            crate::config::PRESET_BALANCED.to_string()
+        let id = if cfg.presets.iter().any(|p| p.id == catalyx_core::config::PRESET_BALANCED) {
+            catalyx_core::config::PRESET_BALANCED.to_string()
         } else {
             cfg.presets.first().map(|p| p.id.clone()).unwrap_or_default()
         };

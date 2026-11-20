@@ -10,8 +10,8 @@ use super::icons::{self, Ico};
 use super::theme::{alpha, mix, pal};
 use super::widgets::*;
 use super::CatalyxApp;
-use crate::app::Intent;
-use crate::engine::{Phase, Status};
+use catalyx_core::app::Intent;
+use catalyx_core::engine::{Phase, Status};
 use egui::{pos2, vec2, Align, Align2, FontId, Id, Layout, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use std::f32::consts::{PI, TAU};
 
@@ -137,7 +137,7 @@ impl CatalyxApp {
 
     /// Starting a boost. The core decides whether the summary comes first (it then sends
     /// `Event::ConfirmBoost`, which opens the dialog).
-    pub(super) fn request_boost(&mut self, game: Option<crate::app::GameId>) {
+    pub(super) fn request_boost(&mut self, game: Option<catalyx_core::app::GameId>) {
         self.send(Intent::Boost { game });
     }
 }

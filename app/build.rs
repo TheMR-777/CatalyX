@@ -1,5 +1,6 @@
 //! Embeds assets/catalyx.ico as the program's icon (what Explorer, the taskbar and Task Manager show).
 //! Writes the Windows resource file by hand, so no Windows SDK resource compiler is needed.
+//! The icon belongs to the workspace (`../../assets`), because it is the program's, not the package's.
 
 use std::io::Write;
 
@@ -23,11 +24,11 @@ fn entry(out: &mut Vec<u8>, kind: u16, id: u16, data: &[u8]) {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=assets/catalyx.ico");
+    println!("cargo:rerun-if-changed=../../assets/catalyx.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
         return;
     }
-    let Ok(ico) = std::fs::read("assets/catalyx.ico") else { return };
+    let Ok(ico) = std::fs::read("../../assets/catalyx.ico") else { return };
     if ico.len() < 6 {
         return;
     }

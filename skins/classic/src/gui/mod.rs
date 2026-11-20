@@ -1,6 +1,6 @@
 //! The window. Built on egui (eframe, OpenGL) and the egui-components library.
 //!
-//! The window is a skin over the core (`crate::app`): it draws from `self.v` (the core's View, taken at
+//! The window is a skin over the core (`catalyx_core::app`): it draws from `self.v` (the core's View, taken at
 //! the start of each frame and after each change), changes things only through `send`, and shows the
 //! core's events (toasts, the boost summary, closing).
 //!
@@ -18,10 +18,10 @@ mod pages;
 mod theme;
 mod widgets;
 
-use crate::app::{self, Core, CoreOptions, Event, Hint, Intent, Interest, View};
-use crate::config::Config;
-use crate::engine::Phase;
-use crate::{ffi, procs};
+use catalyx_core::app::{self, Core, CoreOptions, Event, Hint, Intent, Interest, View};
+use catalyx_core::config::Config;
+use catalyx_core::engine::Phase;
+use catalyx_core::{ffi, procs};
 use egui::{vec2, Align, Context, Layout, RichText};
 use egui_components::Toasts;
 use icons::Ico;
@@ -57,7 +57,7 @@ pub const TABS: [(Tab, &str, &str, Ico); 7] = [
 
 /// Which preset or game-with-own-settings a page edits. The core's target type, so this page state
 /// and `Intent::SetSetting` cannot drift apart.
-pub type EditTarget = crate::app::Target;
+pub type EditTarget = catalyx_core::app::Target;
 
 #[derive(Clone, Copy)]
 pub enum PickFor {
@@ -124,9 +124,9 @@ pub struct CatalyxApp {
 
 impl CatalyxApp {
     pub fn new(cc: &eframe::CreationContext<'_>, opts: Options) -> Self {
-        crate::trace::mark("window and GL context ready");
+        catalyx_core::trace::mark("window and GL context ready");
         theme::install_fonts(&cc.egui_ctx);
-        crate::trace::mark("fonts installed");
+        catalyx_core::trace::mark("fonts installed");
         let no_save = opts.screenshot.is_some() || opts.tour.is_some() || opts.demo || opts.selftest.is_some();
         let check_run = opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some();
         // The look flags of check runs are this skin's own settings: applied once, never saved for them.
@@ -189,7 +189,7 @@ impl CatalyxApp {
             shot_requested: false,
             tour_step: 0,
         };
-        crate::trace::mark("app state built");
+        catalyx_core::trace::mark("app state built");
         if app.reveal_step == 2 {
             // A check run draws at once and needs the data now; a normal start probes after the window is shown.
             app.hint(Hint::Shown);
@@ -220,7 +220,7 @@ impl CatalyxApp {
                 self.reveal_step = 2;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                crate::trace::mark("window shown");
+                catalyx_core::trace::mark("window shown");
                 self.hint(Hint::Shown);
             }
             _ => {}
@@ -443,7 +443,7 @@ impl eframe::App for CatalyxApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        crate::trace::frame();
+        catalyx_core::trace::frame();
         self.reveal_when_ready(ui.ctx());
         self.frames = self.frames.max(1);
         self.sync_titlebar();
@@ -509,7 +509,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         persist_window: false,
         ..Default::default()
     };
-    crate::trace::mark("opening the window");
+    catalyx_core::trace::mark("opening the window");
     eframe::run_native("CatalyX", native, Box::new(move |cc| Ok(Box::new(CatalyxApp::new(cc, opts))))).map_err(|e| e.to_string())
 }
 

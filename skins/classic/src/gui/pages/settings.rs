@@ -1,13 +1,13 @@
 //! Settings: look, behaviour, administrator start, the optional background watcher, your data.
 
-use crate::app::spec;
-use crate::app::{window, Intent};
 use crate::gui::control::Style;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::{self, alpha, AccentId, ThemeId};
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, PickFor};
-use crate::{config, procs};
+use catalyx_core::app::spec;
+use catalyx_core::app::{window, Intent};
+use catalyx_core::{config, procs};
 use egui::{vec2, RichText, Sense, Stroke, Ui};
 
 /// Opens CatalyX again with administrator rights (through the one-click task when it is set

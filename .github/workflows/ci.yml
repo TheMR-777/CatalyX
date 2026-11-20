@@ -35,14 +35,16 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+      # One workspace, three packages: the core, the skin and the window program. --all-targets lints
+      # the tests too, which is where half of the rules really live.
       - name: Clippy
-        run: cargo clippy --release -- -D warnings
+        run: cargo clippy --release --workspace --all-targets -- -D warnings
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --workspace
 
       - name: Test
-        run: cargo test --release
+        run: cargo test --release --workspace
 
       - name: The program starts and answers
         shell: pwsh

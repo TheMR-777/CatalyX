@@ -2,13 +2,13 @@
 //! attention are shown, and the right-hand card is the plan while idle, the live session while
 //! boosting.
 
-use crate::app::{power_summary, Intent, NoticeKind};
-use crate::engine::{Phase, Status, Tags};
 use crate::gui::control;
 use crate::gui::icons::{self, Ico};
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget, Tab};
-use crate::procs;
+use catalyx_core::app::{power_summary, Intent, NoticeKind};
+use catalyx_core::engine::{Phase, Status, Tags};
+use catalyx_core::procs;
 use egui::{vec2, Align, Layout, RichText, ScrollArea, Ui};
 
 const SIDE_W: f32 = 320.0;
@@ -100,7 +100,7 @@ fn hero(app: &mut CatalyxApp, ui: &mut Ui, status: &Status) {
                             }
                         } else {
                             let names: Vec<String> = app.v.config.games.iter().map(|g| g.name.clone()).collect();
-                            let ids: Vec<crate::app::GameId> = app.v.config.games.iter().map(|g| g.id.clone()).collect();
+                            let ids: Vec<catalyx_core::app::GameId> = app.v.config.games.iter().map(|g| g.id.clone()).collect();
                             let mut i = sel;
                             if dropdown(ui, "boost-game", half, &mut i, &names) {
                                 app.send(Intent::SelectGame { id: ids[i].clone() });
@@ -342,7 +342,7 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
                 ui.set_height(28.0);
                 ui.label(dim(ui, "Windows desktop is off", 14.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if link_button(ui, "Bring it back").on_hover_text(format!("Or press {}", crate::shell::EXIT_KEYS)).clicked() {
+                    if link_button(ui, "Bring it back").on_hover_text(format!("Or press {}", catalyx_core::shell::EXIT_KEYS)).clicked() {
                         app.send(Intent::ExitQuietDesktop);
                     }
                 });

@@ -1,13 +1,13 @@
 //! Games: your library. Add by browsing, by dropping a file on the window, or by importing what
 //! Steam, Epic and GOG already installed. Each game has its own profile and real-program setting.
 
-use crate::app::{window, Intent};
-use crate::config::Game;
-use crate::engine::Phase;
 use crate::gui::icons::Ico;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget, PickFor, Tab};
-use crate::library;
+use catalyx_core::app::{window, Intent};
+use catalyx_core::config::Game;
+use catalyx_core::engine::Phase;
+use catalyx_core::library;
 use egui::{vec2, Align, Layout, RichText, ScrollArea, Ui};
 use std::collections::HashMap;
 
@@ -259,7 +259,7 @@ fn details(app: &mut CatalyxApp, ui: &mut Ui, g: Game) {
         }
     });
     if use_manual {
-        let exe = crate::config::file_name_lower(&manual);
+        let exe = catalyx_core::config::file_name_lower(&manual);
         app.send(Intent::SetRealProgram { id: g.id.clone(), exe: Some(exe) });
     }
     app.ui.games.manual_exe.insert(g.id.clone(), manual);

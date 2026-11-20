@@ -52,10 +52,13 @@ Details in `docs/DEVELOPING.md`.
 
 ## Map
 
-`src/lib.rs` the program (CLI first, then window), `src/main.rs` the window front-end (no console), `src/bin/catalyx-cli.rs` the console front-end | `src/cli/` commands | `src/engine/` the boost engine (types,
-journal, boost, apply, running, restore, desktop) | `src/config/` settings, presets, lists | `src/gui/` window
-(`pages/`, `chrome.rs`, `theme.rs`, `widgets.rs`, `mark.rs`) | `src/shell.rs` quiet desktop | `src/procs.rs`
-monitor | `src/services.rs` `power.rs` `tweaks.rs` `gpu.rs` Windows operations | `src/ffi.rs` Win32 bindings.
+Three packages in one workspace (`Cargo.toml` holds the version, the dependency versions and the profile):
+`app/src/main.rs` the window program (the command line, then the one line that picks the skin) | `skins/classic/`
+the window (`src/gui/` pages, chrome, theme, widgets, mark; `src/selftest.rs` the end-to-end check) |
+`crates/catalyx-core/` everything else: `src/app/` the state behind the window, `src/cli/` commands, `src/engine/`
+the boost engine (types, journal, boost, apply, running, restore, desktop), `src/config/` settings, presets, lists,
+`src/shell.rs` quiet desktop, `src/procs.rs` monitor, `src/services.rs` `power.rs` `tweaks.rs` `gpu.rs` Windows
+operations, `src/ffi.rs` Win32 bindings, `src/bin/catalyx-cli.rs` the console program. The core links no egui.
 Full table with responsibilities: `docs/ARCHITECTURE.md`.
 
 ## Rules that must not be broken

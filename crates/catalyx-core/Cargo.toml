@@ -1,0 +1,24 @@
+[package]
+name = "catalyx-core"
+description = "CatalyX's core: settings, the boost engine, Windows probes and the command line. No window."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lib]
+name = "catalyx_core"
+
+# The console program: this crate plus a `main` that prints. It links no egui, so a script pays for
+# nothing but the booster itself.
+[[bin]]
+name = "catalyx-cli"
+path = "src/bin/catalyx-cli.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+winreg.workspace = true

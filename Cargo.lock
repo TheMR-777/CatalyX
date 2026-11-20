@@ -202,14 +202,30 @@ dependencies = [
 name = "catalyx"
 version = "0.4.2"
 dependencies = [
- "eframe",
- "egui",
- "egui-components",
- "png 0.17.16",
+ "catalyx-core",
+ "catalyx-skin-classic",
+]
+
+[[package]]
+name = "catalyx-core"
+version = "0.4.2"
+dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
  "winreg",
+]
+
+[[package]]
+name = "catalyx-skin-classic"
+version = "0.4.2"
+dependencies = [
+ "catalyx-core",
+ "eframe",
+ "egui",
+ "egui-components",
+ "png 0.17.16",
+ "serde_json",
 ]
 
 [[package]]

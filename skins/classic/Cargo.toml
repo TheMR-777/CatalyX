@@ -1,0 +1,17 @@
+[package]
+name = "catalyx-skin-classic"
+description = "The classic CatalyX window: seven pages, the theme, the boost control and the self-test."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+catalyx-core.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-components.workspace = true
+serde_json.workspace = true
+png.workspace = true

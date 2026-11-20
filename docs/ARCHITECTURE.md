@@ -1,34 +1,40 @@
 # Architecture
 
-CatalyX is one Rust binary (`catalyx.exe`) that is a window, a command-line tool and a background watcher
-depending on how it is started. There is no service, no driver and no second program.
+CatalyX is one Rust workspace of three packages: the core (no window in it), the classic skin (the window), and
+the program that joins them. The core is also the console program. There is no service, no driver and no
+background daemon.
 
 ```
-src/
-  lib.rs             the program: CLI first, then the window; check runs (--screenshot / --self-test / --tour)
-  main.rs            front-end 1: catalyx.exe, a window program (no console, never a terminal)
-  bin/catalyx-cli.rs front-end 2: catalyx-cli.exe, the same program as a console program (scripts, pipes, agents)
-  trace.rs           optional start-up timing (CATALYX_TRACE=1)
-  app/               the core behind the window: state, intents, view, settings catalogue, boost description, jobs, upkeep
-  cli/               every command (mod = parsing + dispatch; one file per area)
-  engine/            the boost engine (own thread): the heart of the program
-  config/            settings, presets, the app/service lists, the saved config file
-  gui/               the egui window: pages/, chrome (title bar + sidebar), control (the boost control), theme, widgets, the mark
-  shell.rs           the quiet desktop: stop/start explorer.exe, the exit shortcut, the guard
-  procs.rs           the process monitor (own thread) and per-process operations
-  services.rs        Windows services: list, stop (with dependents), start
-  power.rs           power plans through powercfg
-  tweaks.rs          registry and scheduled-task changes, each remembering the old value
-  gpu.rs             NVIDIA clock offsets (NvAPI) and readings (NVML)
-  launcher.rs        starting a game and finding the real program behind a launcher
-  library.rs         finding installed games
-  catalog.rs         known apps and services with categories and suggestions
-  elevate.rs         one-click administrator start and watcher tasks (Task Scheduler)
-  watch.rs           `catalyx watch`: the window-less auto-boost loop
-  doctor.rs          `catalyx doctor`: proves each feature against real Windows state
-  selftest.rs        the window's built-in end-to-end check
-  ffi.rs             hand-written Win32 bindings used across the program
-build.rs             embeds assets/catalyx.ico as the program icon (no SDK resource compiler needed)
+Cargo.toml             workspace: the version, the dependency versions, one build profile
+crates/catalyx-core/   everything that is not drawing (serde, serde_json, sysinfo, winreg; no egui)
+  lib.rs               the public surface: one line per module
+  start.rs             what either front-end does first (trace, console, hooks) and the check-run watchdog
+  bin/catalyx-cli.rs   front-end 1: catalyx-cli.exe, the console program (scripts, pipes, agents)
+  app/                 the core behind the window: state, intents, view, settings catalogue, boost description, jobs, upkeep
+  cli/                 every command (mod = parsing + dispatch; one file per area)
+  engine/              the boost engine (own thread): the heart of the program
+  config/              settings, presets, the app/service lists, the saved config file
+  trace.rs             optional start-up timing (CATALYX_TRACE=1)
+  shell.rs             the quiet desktop: stop/start explorer.exe, the exit shortcut, the guard
+  procs.rs             the process monitor (own thread) and per-process operations
+  services.rs          Windows services: list, stop (with dependents), start
+  power.rs             power plans through powercfg
+  tweaks.rs            registry and scheduled-task changes, each remembering the old value
+  gpu.rs               NVIDIA clock offsets (NvAPI) and readings (NVML)
+  launcher.rs          starting a game and finding the real program behind a launcher
+  library.rs           finding installed games
+  catalog.rs           known apps and services with categories and suggestions
+  elevate.rs           one-click administrator start and watcher tasks (Task Scheduler)
+  watch.rs             `catalyx watch`: the window-less auto-boost loop
+  doctor.rs            `catalyx doctor`: proves each feature against real Windows state
+  ffi.rs               hand-written Win32 bindings used across the program
+skins/classic/         the window: the only package that links egui/eframe
+  lib.rs               the skin's entry: the window, from the command-line flags
+  gui/                 the egui window: pages/, chrome (title bar + sidebar), control (the boost control), theme, widgets, the mark
+  selftest.rs          the window's built-in end-to-end check
+app/                   the window program
+  main.rs              front-end 2: catalyx.exe (no console, never a terminal), and the one line that picks the skin
+  build.rs             embeds assets/catalyx.ico as the program icon (no SDK resource compiler needed)
 ```
 
 ## Threads and processes

@@ -107,13 +107,19 @@ after it is shown so they never compete with the first frames. `CATALYX_TRACE=1`
 
 ## Compatibility
 
-**No backwards compatibility before 1.0** (decided 2026-11-19). There is no release to migrate from, so the
-pre-alpha builds do not promise to read each other's data. A config file whose `version` is not the current one is
-set aside and a fresh default is used, instead of being upgraded through a chain of migrations; the PureBoost-era
-folder, scheduled-task names, env var and process names go with it; the CLI keeps no historical aliases and its
-help text is written plainly from the catalogue rather than laid out to match an older build. This has been
-carried out (redesign steps S2 and S3): `Config::load` moves an unreadable file to `config.json.old`, and the
-PureBoost-era folder, task names, env var, process names and aliases are deleted.
+**No backwards compatibility before 1.0** (decided 2026-11-19, sharpened 2026-11-21). There is no release to
+migrate from, so the pre-alpha builds do not promise to read each other's data. A config file whose `version` is
+not the current one is set aside and a fresh default is used, instead of being upgraded through a chain of
+migrations: `Config::load` moves such a file to `config.json.old` (its bytes kept, never destroyed). The
+PureBoost-era folder, scheduled-task names, env var and process names are gone (redesign step S2).
+
+**The split is done by hand, not by migration code** (decided 2026-11-21). This program has exactly one user and
+one PC, so a restructuring costs one file moved on that machine, never a compatibility layer shipped to everyone
+else: no code exists to move a folder, a config or a journal between layouts, and none will until a stable
+release gives someone else's data a right to survive. The version gate stays as the one hook that release will
+need — written, tested, and unused meanwhile. The CLI's historical choice words (`above-normal`, `boost`,
+`cpu-boost`, ...) and its pinned help text stay too: they face scripts rather than data, cost nothing, and step
+S3 (which would have removed them) was dropped for that reason.
 
 The one exception is the **recovery journal**: a newer build must either undo an older journal or refuse it out
 loud. A crash must never leave Windows boosted, or the taskbar gone, because the version that wrote the journal is

@@ -5,7 +5,7 @@
 
 use super::icons::{self, Ico};
 use super::theme::{alpha, mix, pal, Palette};
-use crate::config::ProcAction;
+use catalyx_core::config::ProcAction;
 use egui::{pos2, vec2, Align, Color32, CursorIcon, FontFamily, FontId, Layout, Rect, Response, RichText, Sense, Stroke, Ui};
 
 /// The one width for drop-downs and segmented controls that sit on the right of a settings row,

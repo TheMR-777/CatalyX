@@ -836,7 +836,7 @@ impl State {
     }
 
     /// The self-test's stand-in game (check runs only; the engine treats id "selftest" specially).
-    pub(super) fn add_selftest_game(&mut self, game: Game) -> usize {
+    pub(crate) fn add_selftest_game(&mut self, game: Game) -> usize {
         let cfg = self.cfg_mut();
         cfg.games.push(game);
         cfg.selected_game = cfg.games.len() - 1;

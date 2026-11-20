@@ -2,15 +2,15 @@
 //! Rules apply to all games or only to one; "Close" is the only choice that can lose work, and
 //! the suggestions never use it for programs that hold your data.
 
-use crate::app::Intent;
-use crate::catalog;
-use crate::config::{app_is_protected, Config, ProcAction};
 use crate::gui::icons::{self, Ico};
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::CatalyxApp;
-use crate::procs;
+use catalyx_core::app::Intent;
+use catalyx_core::catalog;
+use catalyx_core::config::{app_is_protected, Config, ProcAction};
+use catalyx_core::procs;
 use egui::{pos2, vec2, Align, Align2, FontId, Layout, Rect, RichText, ScrollArea, Sense, Ui};
 use std::collections::HashMap;
 
@@ -53,7 +53,7 @@ fn effective_in(cfg: &Config, game: Option<usize>, exe: &str) -> ProcAction {
 }
 
 /// The scope as an id: the page keeps its picker as an index, the core names games by id.
-fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<crate::app::GameId> {
+fn scope_id(app: &CatalyxApp, game: Option<usize>) -> Option<catalyx_core::app::GameId> {
     game.and_then(|i| app.v.config.games.get(i)).map(|g| g.id.clone())
 }
 

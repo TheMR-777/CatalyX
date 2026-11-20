@@ -12,7 +12,7 @@ pub mod tuning;
 use super::icons::{self, Ico};
 use super::widgets::{bold, faint};
 use super::{CatalyxApp, EditTarget, PickFor};
-use crate::app::Intent;
+use catalyx_core::app::Intent;
 use egui::Context;
 use egui_components::{AlertChoice, AlertDialog, Button, Dialog};
 
@@ -30,8 +30,8 @@ pub enum Confirm {
     /// The summary shown before a boost starts: the game to start, or none for gaming mode alone,
     /// and the core's plan for exactly that game.
     Boost {
-        game: Option<crate::app::GameId>,
-        plan: crate::app::Plan,
+        game: Option<catalyx_core::app::GameId>,
+        plan: catalyx_core::app::Plan,
     },
     RemoveGame {
         id: String,

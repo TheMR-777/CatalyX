@@ -1,14 +1,14 @@
 //! Tuning: power plan, CPU performance and graphics card clocks, with live readings from the
 //! processor and the driver as proof that a setting does what it says.
 
-use crate::app::spec::{self, Kind, Value};
-use crate::app::{Intent, Target};
-use crate::gpu;
 use crate::gui::icons::Ico;
 use crate::gui::pages::Confirm;
 use crate::gui::theme::alpha;
 use crate::gui::widgets::*;
 use crate::gui::CatalyxApp;
+use catalyx_core::app::spec::{self, Kind, Value};
+use catalyx_core::app::{Intent, Target};
+use catalyx_core::gpu;
 use egui::{vec2, Align, Layout, RichText, Ui};
 
 #[derive(Default)]

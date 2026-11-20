@@ -18,7 +18,8 @@ mod upkeep;
 mod view;
 pub mod window;
 
-pub(crate) mod spec;
+/// The settings catalogue: shared by the CLI and by whatever skin is compiled in.
+pub mod spec;
 
 pub use boost::{power_summary, NoticeKind, Plan};
 pub use intent::{Event, GameId, Hint, Intent, Interest, PresetId, Tone};
@@ -205,15 +206,16 @@ impl Core {
         }
     }
 
-    /// Check runs only: show the boost summary for this game whatever the "ask before boosting" option says.
-    pub(crate) fn show_boost_summary(&self, game: Option<GameId>) {
+    /// The skin's self-test only: show the boost summary for this game whatever the "ask before boosting"
+    /// option says.
+    pub fn show_boost_summary(&self, game: Option<GameId>) {
         let mut st = self.inner.lock();
         st.show_boost_summary(game);
         self.inner.release(st);
     }
 
-    /// The self-test only: adds its stand-in game (never saved) and selects it.
-    pub(crate) fn add_selftest_game(&self, game: Game) {
+    /// The skin's self-test only: adds its stand-in game (never saved) and selects it.
+    pub fn add_selftest_game(&self, game: Game) {
         self.inner.lock().add_selftest_game(game);
     }
 }

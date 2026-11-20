@@ -6,13 +6,14 @@
 //!   hud  - the live meters, the boost control and the session card are drawn.
 //!
 //! It can never hang: every stage has its own time limit, and `finish` is also reached by an
-//! independent watchdog thread (see `main.rs`) that ends the process whatever the window does.
+//! independent watchdog thread (see `catalyx_core::start::begin_check_run`) that ends the process
+//! whatever the window does.
 //! Only the self-test's own stand-in game is touched; nothing else on the PC changes.
 
-use crate::app::Intent;
-use crate::engine::Phase;
 use crate::gui::{CatalyxApp, Tab};
-use crate::{ffi, procs};
+use catalyx_core::app::Intent;
+use catalyx_core::engine::Phase;
+use catalyx_core::{ffi, procs};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -193,10 +194,10 @@ impl SelfTest {
         let _ = std::fs::copy(format!("{sys}\\System32\\PING.EXE"), dir.join("catalyx-testgame.exe"));
         let _ = std::fs::write(&bat, "@echo off\r\nrem test launcher: the real program is started by this batch file\r\n\"%~dp0catalyx-testgame.exe\" -n 16 127.0.0.1 >nul\r\n");
         // A real boost, but only of the one thing that dies with the test: the stand-in's own priority.
-        let only_priority = crate::config::Settings {
-            priority: crate::config::Priority::High,
-            power: crate::config::PowerChoice::Keep,
-            cpu: crate::config::CpuLevel::Off,
+        let only_priority = catalyx_core::config::Settings {
+            priority: catalyx_core::config::Priority::High,
+            power: catalyx_core::config::PowerChoice::Keep,
+            cpu: catalyx_core::config::CpuLevel::Off,
             apps: false,
             services: false,
             clean_ram: false,
@@ -209,18 +210,18 @@ impl SelfTest {
             pause_maintenance: false,
             mmcss_games: false,
             no_power_throttling: false,
-            gpu: crate::config::GpuLevel::Off,
+            gpu: catalyx_core::config::GpuLevel::Off,
             lower_others: false,
             quiet_desktop: false,
         };
         // The boost goes through the core like any other, without the summary (this run's config is never
         // saved); the engine knows the stand-in by its id "selftest".
         app.send(Intent::SetOption { key: "confirm-boost".into(), value: "off".into() });
-        app.core.add_selftest_game(crate::config::Game {
+        app.core.add_selftest_game(catalyx_core::config::Game {
             id: "selftest".into(),
             name: "Self-test game".into(),
             launch: bat.to_string_lossy().to_string(),
-            preset: crate::config::PRESET_MAX.into(),
+            preset: catalyx_core::config::PRESET_MAX.into(),
             custom: Some(only_priority),
             ..Default::default()
         });

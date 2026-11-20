@@ -1,0 +1,22 @@
+[package]
+name = "catalyx"
+description = "CatalyX - a lean, ad-free, fully reversible game booster for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme = "../README.md"
+keywords = ["game-booster", "windows", "performance", "egui", "gaming"]
+categories = ["games", "os::windows-apis", "gui"]
+build = "build.rs"
+
+# The window program (no console window, ever).
+[[bin]]
+name = "catalyx"
+path = "src/main.rs"
+
+[dependencies]
+catalyx-core.workspace = true
+catalyx-skin-classic.workspace = true
