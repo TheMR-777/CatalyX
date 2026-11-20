@@ -13,7 +13,7 @@ footprint of a few MB. It is Windows-only and uses hand-written Win32 FFI.
 |---|---|
 | **CatalyX** (capital X) | display name, docs, window title (`FindWindow` looks the window up by this title!) |
 | `catalyx` | crate, exe, CLI, `%APPDATA%\CatalyX`, task names `CatalyX` / `CatalyX Watcher` |
-| `CATALYX_DATA` | env var: points config/journal/caches at a scratch folder (`PUREBOOST_DATA` still works) |
+| `CATALYX_DATA` | env var: points config/journal/caches at a scratch folder |
 
 ## Start here (context you will not otherwise have)
 
@@ -82,9 +82,10 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
 
 1. `src/config/settings.rs`: field on `Settings` (+ doc comment) and its value in `impl Default for Settings`.
 2. `src/config/presets.rs`: its value in Gentle and Max Squeeze (Balanced uses the default).
-3. Saved files: new fields need `#[serde(default)]` (the struct has it). If existing built-in presets must change,
-   bump `CONFIG_VERSION` and add an idempotent migration in `Config::migrate` (and a test, see
-   `max_squeeze_gets_the_quiet_desktop_once...`). Never overwrite a person's own presets or per-game settings.
+3. Saved files: new fields need `#[serde(default)]` (the struct has it). There is **no migration chain**
+   (docs/DECISIONS.md, Compatibility): bump `CONFIG_VERSION` when the saved shape changes in a way a reader must
+   not guess at, and a file with any other version is set aside (`config.json.old`) with defaults used. Never
+   overwrite a person's own presets or per-game settings.
 4. `src/selftest.rs`: it builds a `Settings` literal; add the field.
 5. `src/app/spec.rs`: one row in `SETTINGS` (key, label, hint, group, administrator need, CLI order, help position,
    kind). The CLI's `show`/`set`, the `help` KEYS block and the classic Profiles form read it; do not list the

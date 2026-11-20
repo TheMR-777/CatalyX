@@ -66,7 +66,7 @@ fn build_rows(app: &CatalyxApp, game: Option<usize>) -> Vec<Row> {
     let snap = app.v.snap.clone();
     let mut map: HashMap<String, Row> = HashMap::new();
     for p in &snap.procs {
-        if p.pid <= 4 || p.name_lower.is_empty() || p.name_lower == "catalyx.exe" || p.name_lower == "pureboost.exe" {
+        if p.pid <= 4 || p.name_lower.is_empty() || p.name_lower == "catalyx.exe" {
             continue;
         }
         let e = map.entry(p.name_lower.clone()).or_insert_with(|| Row {

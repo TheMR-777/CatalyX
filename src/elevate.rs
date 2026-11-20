@@ -155,38 +155,6 @@ pub fn watcher_enabled() -> bool {
     exists(TASK_WATCH)
 }
 
-/// The names the tasks had when the app was still called PureBoost.
-const LEGACY_UI: &str = "PureBoost";
-const LEGACY_WATCH: &str = "PureBoost Watcher";
-
-/// Moves tasks registered under the old name to the new one, pointing at this program: the one-click
-/// administrator start and the background watcher keep working after the rename without the person
-/// having to set them up again. Needs administrator rights (does nothing without them, and tries again
-/// at the next elevated start). Returns what was moved. Ends with a marker file so the check (two
-/// Task Scheduler queries) is made only once.
-pub fn migrate_legacy() -> Vec<String> {
-    let mut moved = Vec::new();
-    let marker = crate::config::data_dir().join("tasks-renamed");
-    if marker.exists() || !ffi::is_admin() {
-        return moved;
-    }
-    let mut ok = true;
-    for (old, new, args, at_logon) in [(LEGACY_UI, TASK_UI, "", false), (LEGACY_WATCH, TASK_WATCH, "watch --quiet", true)] {
-        if exists(old) {
-            if create(new, args, at_logon).is_ok() {
-                delete(old);
-                moved.push(format!("{old} -> {new}"));
-            } else {
-                ok = false; // leave the old one in place and try again next time
-            }
-        }
-    }
-    if ok {
-        let _ = std::fs::write(marker, "the scheduled tasks use the CatalyX names\n");
-    }
-    moved
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

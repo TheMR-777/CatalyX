@@ -19,9 +19,6 @@ impl Cli {
 
     pub(super) fn elevate_cmd(&self) -> Result<(), String> {
         use crate::elevate as el;
-        for m in el::migrate_legacy() {
-            println!("Renamed scheduled task: {m}");
-        }
         match self.arg(1, "setup, remove or status")?.as_str() {
             "status" => {
                 println!("Administrator now:      {}", if ffi::is_admin() { "yes" } else { "no" });
@@ -111,9 +108,6 @@ impl Cli {
     }
     pub(super) fn autostart_cmd(&self) -> Result<(), String> {
         use crate::elevate as el;
-        for m in el::migrate_legacy() {
-            println!("Renamed scheduled task: {m}");
-        }
         match self.arg(1, "on, off or status")?.to_lowercase().as_str() {
             "status" => {
                 println!("Background watcher: {}", if el::watcher_enabled() { "on (starts at sign-in)" } else { "off" });
@@ -156,7 +150,8 @@ impl Cli {
             "import" => {
                 let f = self.arg(2, "file")?;
                 let text = std::fs::read_to_string(&f).map_err(|e| e.to_string())?;
-                let c: Config = serde_json::from_str(&text).map_err(|e| format!("not a CatalyX settings file: {e}"))?;
+                // The same gate as a load: a file from another version is refused, not guessed at.
+                let c = Config::from_json(&text).map_err(|e| format!("not a CatalyX settings file: {e}"))?;
                 c.save();
                 println!("Loaded {} games and {} presets", c.games.len(), c.presets.len());
             }

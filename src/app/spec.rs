@@ -297,7 +297,7 @@ static POWER: [Choice; 3] = [
         hint: PowerChoice::HighPerformance.hint(),
         aliases: &["high-performance"],
     },
-    Choice { key: "catalyx", label: PowerChoice::BoostPlan.label(), hint: PowerChoice::BoostPlan.hint(), aliases: &["pureboost", "boost"] },
+    Choice { key: "catalyx", label: PowerChoice::BoostPlan.label(), hint: PowerChoice::BoostPlan.hint(), aliases: &["boost"] },
 ];
 
 static CPU: [Choice; 3] = [
@@ -783,7 +783,7 @@ mod tests {
         let mut s = Settings::default();
         set(&mut s, "priority", "above-normal").unwrap();
         assert_eq!(s.priority, Priority::AboveNormal);
-        set(&mut s, "power", "pureboost").unwrap();
+        set(&mut s, "power", "boost").unwrap();
         assert_eq!(s.power, PowerChoice::BoostPlan);
         set(&mut s, "cpu", "max-sustained").unwrap();
         assert_eq!(s.cpu, CpuLevel::Max);
@@ -812,8 +812,7 @@ mod tests {
 
     #[test]
     fn the_legacy_realtime_priority_still_reads_correctly() {
-        let mut s = Settings::default();
-        s.priority = Priority::Realtime;
+        let s = Settings { priority: Priority::Realtime, ..Default::default() };
         let d = describe(&s);
         assert_eq!(d[0].1, "Realtime (risky)");
     }

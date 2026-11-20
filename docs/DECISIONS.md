@@ -92,8 +92,8 @@ while a game runs, with a thermal guard. `src/gpu.rs`.
 **CatalyX** (a catalyst speeds a reaction up and comes out unchanged). The mark is an X woven from two strokes:
 the rising "/" in the accent over the "\" with a gap where they cross (`src/gui/mark.rs`; one geometry for the
 title-bar tile, the window icon and the `.ico`). Display name `CatalyX`, command and crate `catalyx`. It was called
-PureBoost first: a first start copies `%APPDATA%\PureBoost` to `%APPDATA%\CatalyX` (copy, never move) and an
-administrator start renames the scheduled tasks.
+PureBoost first; that name is gone from the program (no folder copy, no task renaming, no `pureboost` aliases),
+because nothing released under it is supported (see Compatibility).
 
 ## Start-up
 
@@ -111,8 +111,9 @@ after it is shown so they never compete with the first frames. `CATALYX_TRACE=1`
 pre-alpha builds do not promise to read each other's data. A config file whose `version` is not the current one is
 set aside and a fresh default is used, instead of being upgraded through a chain of migrations; the PureBoost-era
 folder, scheduled-task names, env var and process names go with it; the CLI keeps no historical aliases and its
-help text is written plainly from the catalogue rather than laid out to match an older build. This is carried out
-in one pass at the end of the redesign (the optimisations step), not piecemeal.
+help text is written plainly from the catalogue rather than laid out to match an older build. This has been
+carried out (redesign steps S2 and S3): `Config::load` moves an unreadable file to `config.json.old`, and the
+PureBoost-era folder, task names, env var, process names and aliases are deleted.
 
 The one exception is the **recovery journal**: a newer build must either undo an older journal or refuse it out
 loud. A crash must never leave Windows boosted, or the taskbar gone, because the version that wrote the journal is

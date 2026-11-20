@@ -91,13 +91,6 @@ pub fn run(windowed: bool) {
             std::process::exit(0);
         }
     }
-    // After the rename from PureBoost: move the scheduled tasks to the new names (administrator only,
-    // once, off the startup path).
-    if !check_run && ffi::is_admin() {
-        std::thread::spawn(|| {
-            elevate::migrate_legacy();
-        });
-    }
     ffi::hide_own_console();
     trace::mark("startup checks done");
 

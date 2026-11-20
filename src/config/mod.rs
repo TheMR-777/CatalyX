@@ -13,7 +13,9 @@ pub use lists::*;
 pub use presets::*;
 pub use settings::*;
 
-/// Bumped when saved settings need a one-time fix-up on load.
+/// The only settings version this build reads. There is no release to stay compatible with before
+/// 1.0, so a file with another version is set aside and defaults are used (docs/DECISIONS.md).
+/// Bump it when the saved shape changes in a way a reader must not guess at.
 pub const CONFIG_VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
@@ -70,7 +72,7 @@ pub struct Config {
     pub boost_control: String,
     /// Show a summary of what will change before a boost starts. The summary has a "don't ask again" box.
     pub confirm_boost: bool,
-    /// Missing in files saved before version 2 (reads as 0, not the struct default).
+    /// The settings version the file was written with; a file with any other version is not read.
     #[serde(default)]
     pub version: u32,
     /// The first-run welcome has been shown.
@@ -124,114 +126,61 @@ pub const ACCENT_KEYS: [&str; 8] = ["periwinkle", "ember", "copper", "rose", "sa
 pub const BOOST_CONTROL_KEYS: [&str; 3] = ["bar", "gauge", "ring"];
 
 /// Where settings, the recovery journal and caches live: `%APPDATA%\CatalyX`.
-/// `CATALYX_DATA` (or the older `PUREBOOST_DATA`) points check runs and tests at a scratch folder.
+/// `CATALYX_DATA` points check runs and tests at a scratch folder.
 pub fn data_dir() -> PathBuf {
-    static MIGRATED: std::sync::Once = std::sync::Once::new();
-    let scratch = std::env::var("CATALYX_DATA").or_else(|_| std::env::var("PUREBOOST_DATA")).ok();
-    let d = match scratch {
-        Some(s) => PathBuf::from(s),
-        None => {
+    let d = match std::env::var("CATALYX_DATA") {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => {
             let appdata = std::env::var("APPDATA").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
-            let d = appdata.join("CatalyX");
-            MIGRATED.call_once(|| migrate_old_folder(&appdata.join("PureBoost"), &d));
-            d
+            appdata.join("CatalyX")
         }
     };
     let _ = std::fs::create_dir_all(&d);
     d
 }
 
-/// The app used to be called PureBoost and kept its files in `%APPDATA%\PureBoost`. The first time the
-/// new name starts, whatever the old folder has (settings, a recovery journal still waiting) is COPIED over,
-/// never moved: the old folder stays exactly as it was. Files already present in the new folder win.
-fn migrate_old_folder(old: &std::path::Path, new: &std::path::Path) {
-    if !old.join("config.json").exists() || new.join("config.json").exists() {
-        return;
-    }
-    fn copy_missing(from: &std::path::Path, to: &std::path::Path) {
-        let _ = std::fs::create_dir_all(to);
-        let Ok(rd) = std::fs::read_dir(from) else { return };
-        for e in rd.flatten() {
-            let (src, dst) = (e.path(), to.join(e.file_name()));
-            if src.is_dir() {
-                copy_missing(&src, &dst);
-            } else if !dst.exists() && !e.file_name().to_string_lossy().ends_with(".tmp") {
-                let _ = std::fs::copy(&src, &dst);
-            }
-        }
-    }
-    copy_missing(old, new);
-}
 impl Config {
     pub fn path() -> PathBuf {
         data_dir().join("config.json")
     }
 
-    /// A config read from settings text (the saved file or an imported one). Both go through the
-    /// same migration, so an imported file can never smuggle in an old default.
-    pub fn from_json(text: &str) -> Result<Config, serde_json::Error> {
-        let mut c: Config = serde_json::from_str(text)?;
-        c.migrate();
+    /// A config read from settings text (the saved file or an imported one). A file written by
+    /// another version is refused rather than guessed at: defaults are used instead of a
+    /// half-understood mixture of old and new meaning.
+    pub fn from_json(text: &str) -> Result<Config, String> {
+        let mut c: Config = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        if c.version != CONFIG_VERSION {
+            return Err(format!("the file was saved by version {}; this build reads version {CONFIG_VERSION}", c.version));
+        }
+        c.fix_up();
         Ok(c)
     }
 
     pub fn load() -> Config {
-        std::fs::read_to_string(Self::path()).ok().and_then(|s| Self::from_json(&s).ok()).unwrap_or_default()
+        let path = Self::path();
+        let Ok(text) = std::fs::read_to_string(&path) else { return Config::default() };
+        match Self::from_json(&text) {
+            Ok(c) => c,
+            Err(_) => {
+                set_aside(&path);
+                Config::default()
+            }
+        }
     }
 
-    fn migrate(&mut self) {
-        let c = self;
-        // Version 2: the default game priority moved from Above normal to Normal. Built-in
-        // presets still holding the old default follow along; anything the person set stays.
-        if c.version < 2 {
-            for p in c.presets.iter_mut().filter(|p| p.builtin && p.id != PRESET_MAX) {
-                if p.settings.priority == Priority::AboveNormal {
-                    p.settings.priority = DEFAULT_PRIORITY;
-                }
-            }
-            c.version = 2;
-        }
-        // Version 3: the built-in presets were saved with "do nothing" values (Normal priority,
-        // power plan kept), so a boost changed almost nothing. They are reset to the current
-        // definitions once; the person's own presets and per-game settings are untouched.
-        if c.version < 3 {
-            c.presets.retain(|p| !p.builtin);
-            c.version = 3;
-        }
-        // Version 4 refreshes built-in settings; never silently opt the person into closing
-        // programs or stopping services when a new catalog becomes available.
-        if c.version < 4 {
-            c.presets.retain(|p| !p.builtin);
-            c.version = 4;
-        }
-        // Version 5: Max Squeeze also switches Windows' desktop off while the game runs.
-        // Only the built-in Max Squeeze preset follows; the person's own settings stay as they are.
-        if c.version < 5 {
-            for p in c.presets.iter_mut().filter(|p| p.builtin && p.id == PRESET_MAX) {
-                p.settings.quiet_desktop = true;
-            }
-            c.version = 5;
-        }
-        // Version 6: old files listed every service CatalyX knew about as `false` (the default),
-        // so a saved `false` could not be told apart from "never answered". Dropping those
-        // defaults keeps every real choice (a `true`, a per-game rule, an unknown hand-written
-        // name) and lets "Use recommendations" fill the rest again. Nothing is stopped by this:
-        // absence and `false` both mean "keep it running".
-        if c.version < 6 {
-            c.services.retain(|name, on| *on || crate::catalog::known_service(name).is_none());
-            c.version = CONFIG_VERSION;
-        }
-        // Make sure the three built-in presets are always there.
+    /// Whatever the file said, the program needs the three built-in presets, a default preset that
+    /// exists, and a remembered game inside the library.
+    fn fix_up(&mut self) {
         for b in builtin_presets() {
-            if !c.presets.iter().any(|p| p.id == b.id) {
-                c.presets.push(b);
+            if !self.presets.iter().any(|p| p.id == b.id) {
+                self.presets.push(b);
             }
         }
-        if !c.presets.iter().any(|p| p.id == c.default_preset) {
-            c.default_preset = PRESET_BALANCED.into();
+        if !self.presets.iter().any(|p| p.id == self.default_preset) {
+            self.default_preset = PRESET_BALANCED.into();
         }
         // The library may have shrunk since the file was written (or it came from another PC).
-        c.clamp_selected();
+        self.clamp_selected();
     }
 
     /// Keeps the remembered game index inside the library. Called after a load/import and after
@@ -363,6 +312,12 @@ impl Config {
     }
 }
 
+/// Moves a settings file this build cannot read out of the way: the next save writes fresh
+/// defaults, and whatever the old file held stays readable next to it as config.json.old.
+fn set_aside(path: &std::path::Path) {
+    let _ = std::fs::rename(path, path.with_extension("json.old"));
+}
+
 pub fn file_name_lower(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
@@ -382,44 +337,40 @@ mod tests {
     }
 
     #[test]
-    fn migration_preserves_explicit_choices_and_does_not_opt_in() {
-        let mut old = Config::default();
-        old.version = 3;
-        old.apps.insert("chrome.exe".into(), ProcAction::Close);
-        old.services.insert("MapsBroker".into(), true);
-        old.migrate();
-        assert_eq!(old.version, CONFIG_VERSION);
-        assert_eq!(old.apps.get("chrome.exe"), Some(&ProcAction::Close));
-        assert_eq!(old.services.get("MapsBroker"), Some(&true));
-        let mut untouched = Config::default();
-        untouched.version = 3;
-        untouched.migrate();
-        assert!(untouched.apps.values().all(|v| *v == ProcAction::Keep));
-        assert!(untouched.services.values().all(|v| !v));
+    fn a_current_file_keeps_what_the_person_chose() {
+        let mut c = Config::default();
+        c.apps.insert("chrome.exe".into(), ProcAction::Close);
+        c.services.insert("MapsBroker".into(), true);
+        c.games.push(Game { name: "One".into(), ..Default::default() });
+        c.selected_game = 7;
+        let text = serde_json::to_string(&c).unwrap();
+
+        let read = Config::from_json(&text).unwrap();
+        assert_eq!(read.apps.get("chrome.exe"), Some(&ProcAction::Close));
+        assert_eq!(read.services.get("MapsBroker"), Some(&true));
+        assert_eq!(read.selected_game, 0, "the remembered game is clamped to the library");
+        assert_eq!(read.selected().map(|g| g.name.as_str()), Some("One"));
     }
 
     #[test]
-    fn max_squeeze_gets_the_quiet_desktop_once_and_other_choices_stay() {
-        // A version 4 file: built-in presets saved before the setting existed, one custom preset.
-        let mut old = Config::default();
-        old.version = 4;
-        for p in old.presets.iter_mut() {
-            p.settings.quiet_desktop = false;
-        }
-        let mut mine = old.preset(PRESET_MAX).clone();
-        mine.id = "mine".into();
-        mine.name = "Mine".into();
-        mine.builtin = false;
-        old.presets.push(mine);
-        old.migrate();
-        assert!(old.preset(PRESET_MAX).settings.quiet_desktop, "Max Squeeze switches the desktop off");
-        assert!(!old.preset(PRESET_BALANCED).settings.quiet_desktop);
-        assert!(!old.preset(PRESET_GENTLE).settings.quiet_desktop);
-        assert!(!old.preset("mine").settings.quiet_desktop, "a person's own preset is never changed");
-        // Turning it off in Max Squeeze afterwards must stick: migration runs once.
-        old.presets.iter_mut().find(|p| p.id == PRESET_MAX).unwrap().settings.quiet_desktop = false;
-        old.migrate();
-        assert!(!old.preset(PRESET_MAX).settings.quiet_desktop);
+    fn a_file_from_another_version_is_refused_and_kept_aside() {
+        // No release to stay compatible with before 1.0: an old file is not upgraded, it is put
+        // out of the way so defaults are used and nothing the person wrote is destroyed.
+        let mut old = Config { version: CONFIG_VERSION - 1, ..Default::default() };
+        old.games.push(Game { name: "One".into(), ..Default::default() });
+        let text = serde_json::to_string(&old).unwrap();
+        let why = Config::from_json(&text).unwrap_err();
+        assert!(why.contains("version"), "the refusal says why: {why}");
+
+        let dir = std::env::temp_dir().join(format!("catalyx-aside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.json");
+        std::fs::write(&file, &text).unwrap();
+        set_aside(&file);
+        assert!(!file.exists(), "the unreadable file is moved, so the next save writes defaults");
+        assert_eq!(std::fs::read_to_string(dir.join("config.json.old")).unwrap(), text, "and it is still readable");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -434,41 +385,5 @@ mod tests {
         assert!(c.services_for(Some(&g))["ExampleService"]);
         assert_eq!(c.apps["example.exe"], ProcAction::Lower);
         assert!(!c.services["ExampleService"]);
-    }
-
-    #[test]
-    fn imported_settings_get_the_same_migration_as_a_saved_file() {
-        // A file written by version 4: Max Squeeze predates the quiet desktop, and the remembered
-        // game points past the end (the library shrank on another PC).
-        let mut old = Config::default();
-        old.version = 4;
-        old.presets.iter_mut().find(|p| p.id == PRESET_MAX).unwrap().settings.quiet_desktop = false;
-        old.games.push(Game { name: "One".into(), ..Default::default() });
-        old.selected_game = 7;
-        let text = serde_json::to_string(&old).unwrap();
-
-        let c = Config::from_json(&text).unwrap();
-        assert!(c.preset(PRESET_MAX).settings.quiet_desktop, "an import is migrated like a load");
-        assert_eq!(c.selected_game, 0, "the remembered game is clamped to the library");
-        assert_eq!(c.selected().map(|g| g.name.as_str()), Some("One"));
-    }
-
-    #[test]
-    fn old_service_defaults_are_not_mistaken_for_choices() {
-        // Version 5 files listed every known service as `false` (the old default), so a saved
-        // false cannot be told apart from "never answered". The upgrade drops those defaults;
-        // a real opt-in, a per-game rule and an unknown hand-written name stay.
-        let mut old = Config::default();
-        old.version = 5;
-        old.services.insert("WSearch".into(), false);
-        old.services.insert("Spooler".into(), true);
-        old.services.insert("SomeCustomService".into(), false);
-        old.games.push(Game { name: "One".into(), ..Default::default() });
-        old.games[0].services.insert("WSearch".into(), false);
-        old.migrate();
-        assert_eq!(old.services.get("WSearch"), None, "a saved default is not a choice");
-        assert_eq!(old.services.get("Spooler"), Some(&true), "an opt-in is kept");
-        assert_eq!(old.services.get("SomeCustomService"), Some(&false), "an unknown rule is kept");
-        assert_eq!(old.games[0].services.get("WSearch"), Some(&false), "a per-game rule is a real choice");
     }
 }

@@ -21,7 +21,7 @@ impl Cli {
         if q.is_empty() {
             return Err("missing plan name".into());
         }
-        if (q == "catalyx" || q == "pureboost") && !power::list().iter().any(|p| p.guid.eq_ignore_ascii_case(power::BOOST_PLAN)) {
+        if q == "catalyx" && !power::list().iter().any(|p| p.guid.eq_ignore_ascii_case(power::BOOST_PLAN)) {
             power::ensure_boost_plan(CpuLevel::Boost, &power::active().unwrap_or_default());
         }
         let plans = power::list();

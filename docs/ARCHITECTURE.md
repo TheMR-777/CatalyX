@@ -72,11 +72,11 @@ change), then make the change, and `forget_last_undo()` if it fails. Add the mat
 
 ## Configuration
 
-`%APPDATA%\CatalyX\config.json`, versioned (`CONFIG_VERSION`) with idempotent migrations in
-`config::Config::migrate`. Presets are `Settings` bundles; a game either follows a preset or carries its own
-`custom` settings plus per-game app/service overrides. `CATALYX_DATA` points everything (config, journal,
-caches) at a scratch folder; the built-in checks and the tests always use it. A first start copies an older
-`%APPDATA%\PureBoost` folder over once.
+`%APPDATA%\CatalyX\config.json`, carrying `CONFIG_VERSION`. There are no migrations: a file with another version
+is moved to `config.json.old` and defaults are used (`config::Config::load`), so a reader never half-understands
+an older shape. Presets are `Settings` bundles; a game either follows a preset or carries its own `custom`
+settings plus per-game app/service overrides. `CATALYX_DATA` points everything (config, journal, caches) at a
+scratch folder; the built-in checks and the tests always use it.
 
 ## The window
 
