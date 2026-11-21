@@ -22,7 +22,7 @@ use util::*;
 /// The help text, for a front-end that has no window to open (the console program's bare run).
 pub use help::text as help_text;
 
-/// True when rgs is a command that prints something, rather than a request to open the window.
+/// True when args is a command that prints something, rather than a request to open the window.
 pub fn wants_console(args: &[String]) -> bool {
     match args.first() {
         None => false,

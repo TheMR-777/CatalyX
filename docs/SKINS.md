@@ -1,8 +1,11 @@
 # Skins: the contract between the core and the window
 
-> **DRAFT, second round (2026-11-15, kept current).** The first round's four open questions are decided (see the
-> end). The preferences half is built (storage under `skins.<skin>`, validation in the skin); the `Skin` static and
-> the shared spec table are not. This file is the reference for anyone writing a skin.
+> **Status (2026-11-21).** This file is the reference for anyone writing a skin. It describes the contract as it is
+> today, and says plainly where it is still a target rather than a fact: **built** are the `Core` handle, `View`,
+> `Intent`/`Event`/`Hint`, and the preferences storage (`skins.<skin>`, validated in the skin); **not built** are
+> the `Skin` static, the shared `Spec` table for preferences, `view.prefs`, `catalyx skin`, `--pref`, and the split
+> of the core's self-test. Until then a skin is a crate that calls `app::Core` itself and is picked by the one line
+> in `app/src/main.rs`; the classic skin keeps its `--theme/--appearance/--accent/--control` aliases.
 
 ## What a skin is
 

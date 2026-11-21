@@ -88,17 +88,17 @@ scratch folder; the built-in checks and the tests always use it.
 
 ## The window
 
-- **egui/eframe 0.35 on OpenGL (glow).** A frameless window: `gui/chrome.rs` draws the title bar and sidebar,
+- **egui/eframe 0.35 on OpenGL (glow).** A frameless window: `skins/classic/src/gui/chrome.rs` draws the title bar and sidebar,
   `widgets::window_edges` provides resizing, and `ffi::style_borderless_window` gives Windows 11's rounded
   corners and shadow.
 - **Repaint policy** (this is why the footprint is small): the window draws only when something changes. The
-  core's upkeep thread (`src/app/mod.rs`, `src/app/upkeep.rs`) wakes it when the view moved (a job result, fresh
+  core's upkeep thread (`crates/catalyx-core/src/app/mod.rs`, `app/upkeep.rs`) wakes it when the view moved (a job result, fresh
   readings, the engine's progress) and never while it is minimised, which draws nothing. Sampled readings share
   one draw cadence, 2 s idle and 0.6 s while boosting, the same as the old frame tick; a job result or an event
   is shown at once. The same thread does the work that must not depend on frames: the debounced save, the
   auto-boost scan, live and service readings on their own deadlines, the 1.5 s trim after minimising, the 30 s
   trim, and putting a boost back before the window closes.
-- **Theme**: `theme::palette(look, accent, tint, dark)` blends a look (Focus/Slate/Mica), an accent colour and a
+- **Theme**: `skins/classic/src/gui/theme.rs`'s `palette(look, accent, tint, dark)` blends a look (Focus/Slate/Mica), an accent colour and a
   tint strength. Layout uses an 8-point grid; see AGENTS.md for the design rules.
 - **The mark** (`skins/classic/src/gui/mark.rs`) is one geometry used for the title-bar tile, the window icon and
   the `.ico`; `app/build.rs` embeds that `.ico` as the program's own icon.
