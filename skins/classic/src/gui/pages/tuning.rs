@@ -8,7 +8,6 @@ use crate::gui::widgets::*;
 use crate::gui::CatalyxApp;
 use catalyx_core::app::spec::{self, Kind, Value};
 use catalyx_core::app::{Intent, Target};
-use catalyx_core::gpu;
 use egui::{vec2, Align, Layout, RichText, Ui};
 
 #[derive(Default)]
@@ -251,7 +250,7 @@ fn gpu_card(app: &mut CatalyxApp, ui: &mut Ui) {
                 12.0,
             ));
             let level = app.v.config.presets[idx].settings.gpu;
-            let hint = gpu::level_hint(level, Some(&st));
+            let hint = app.v.hardware.level_hint(level);
             setting_row(ui, "Graphics tuning", &hint, |ui| {
                 choice(app, ui, "tune-gpu", "gpu", idx);
             });

@@ -6,9 +6,8 @@ use crate::gui::control;
 use crate::gui::icons::{self, Ico};
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget, Tab};
-use catalyx_core::app::{power_summary, Intent, NoticeKind};
-use catalyx_core::engine::{Phase, Status, Tags};
-use catalyx_core::procs;
+use catalyx_core::app::{power_summary, Intent, NoticeKind, Phase, Status, Tags};
+use catalyx_core::format;
 use egui::{vec2, Align, Layout, RichText, ScrollArea, Ui};
 
 const SIDE_W: f32 = 320.0;
@@ -312,7 +311,7 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
             ("Apps lowered", (k.apps_lowered > 0).then(|| k.apps_lowered.to_string())),
             ("Services stopped", (k.services_stopped > 0).then(|| k.services_stopped.to_string())),
             ("Windows features quietened", (k.tweaks > 0).then(|| k.tweaks.to_string())),
-            ("Memory freed", (k.ram_freed > 0).then(|| procs::fmt_mem(k.ram_freed))),
+            ("Memory freed", (k.ram_freed > 0).then(|| format::mem(k.ram_freed))),
             (
                 "Power plan",
                 (!k.power_plan.is_empty()).then(|| {
@@ -342,7 +341,10 @@ fn session_card(app: &mut CatalyxApp, ui: &mut Ui, st: &Status) {
                 ui.set_height(28.0);
                 ui.label(dim(ui, "Windows desktop is off", 14.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if link_button(ui, "Bring it back").on_hover_text(format!("Or press {}", catalyx_core::shell::EXIT_KEYS)).clicked() {
+                    if link_button(ui, "Bring it back")
+                        .on_hover_text(format!("Or press {}", catalyx_core::app::window::EXIT_KEYS))
+                        .clicked()
+                    {
                         app.send(Intent::ExitQuietDesktop);
                     }
                 });

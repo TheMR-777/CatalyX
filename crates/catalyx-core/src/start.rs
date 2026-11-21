@@ -3,7 +3,9 @@
 //! `catalyx.exe` and `catalyx-cli.exe` differ only in what happens once the command line came back with
 //! nothing to run: the window program draws a window, the console program says so and prints the commands.
 
-use crate::{cli, ffi, trace};
+use crate::app::{Options, Origin};
+use crate::config::Config;
+use crate::{cli, elevate, ffi, trace};
 
 /// The trace, the console and the hooks, and the arguments — the first thing either front-end does.
 ///
@@ -24,6 +26,26 @@ pub fn boot(windowed: bool) -> Vec<String> {
         eprintln!("CatalyX: unexpected error: {msg}");
     }));
     args
+}
+
+/// The last steps before a skin draws: a check run's scratch settings and watchdog, the elevation the
+/// person asked for, and hiding the console a window program never owns. Returns false when an
+/// elevated copy was started and this one must end.
+///
+/// One place reads these flags: `Options` parsed them once, so the program and the skin cannot disagree
+/// about what `--self-test` means.
+pub fn prepare_window(opts: &Options) -> bool {
+    if let Origin::Check { selftest, .. } = opts.origin() {
+        begin_check_run(selftest);
+    } else if !opts.no_elevate && !ffi::is_admin() && Config::load().run_as_admin {
+        // Games that run as administrator can only be boosted by an administrator. Through the
+        // one-click task there is no prompt at all; otherwise Windows asks once.
+        if elevate::launch_ui_via_task() || ffi::relaunch_elevated() {
+            return false;
+        }
+    }
+    ffi::hide_own_console();
+    true
 }
 
 /// Marks a check run (a screenshot, a tour, the self-test): it never touches the person's real settings,

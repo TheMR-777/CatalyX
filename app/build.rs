@@ -1,8 +1,8 @@
 //! Embeds assets/catalyx.ico as the program's icon (what Explorer, the taskbar and Task Manager show).
 //! Writes the Windows resource file by hand, so no Windows SDK resource compiler is needed.
-//! The icon belongs to the workspace (`../assets`), because it is the program's, not the package's.
-//! A missing file is a build error, not a quiet iconless exe: the path is relative to this package
-//! and a wrong one shipped once without anything failing.
+//! The icon sits beside the package that embeds it; nothing is read from above `app/`, so the path
+//! cannot point out of the repository the way it once did (a wrong one shipped an iconless exe).
+//! A missing file is a build error, not a quiet skip.
 
 use std::io::Write;
 
@@ -26,12 +26,12 @@ fn entry(out: &mut Vec<u8>, kind: u16, id: u16, data: &[u8]) {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../assets/catalyx.ico");
+    println!("cargo:rerun-if-changed=assets/catalyx.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
         return;
     }
-    let ico = std::fs::read("../assets/catalyx.ico").expect("read ../assets/catalyx.ico (the program's icon)");
-    assert!(ico.len() >= 6, "../assets/catalyx.ico is too short to be an icon");
+    let ico = std::fs::read("assets/catalyx.ico").expect("read assets/catalyx.ico (the program's icon)");
+    assert!(ico.len() >= 6, "assets/catalyx.ico is too short to be an icon");
     let count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
     let mut res = Vec::new();
     entry(&mut res, 0, 0, &[]); // the mandatory empty first resource

@@ -7,6 +7,7 @@
 use super::boost::Plan;
 use super::spec::Target;
 use crate::config::{CpuLevel, ProcAction};
+use crate::engine::Tags;
 
 /// A game, by the id the config gives it.
 pub type GameId = String;
@@ -151,9 +152,6 @@ pub enum Intent {
 
     // ---------------------------------------------------------------- hardware
     RefreshHardware,
-    /// Ask for the service list now rather than at the next regular refresh.
-    #[allow(dead_code)] // part of the skin contract; the classic skin refreshes through Hint::Interest
-    RefreshServices,
     /// Apply the graphics card's Safe step briefly, read it back, undo it.
     TestGraphicsCard,
     /// Switch Windows to this power plan now (an explicit choice, like Windows' own setting).
@@ -193,22 +191,13 @@ pub enum Intent {
         key: String,
         value: String,
     },
-    /// One of the skin's own preferences, saved under `skins.<skin>` (`docs/SKINS.md`). `skin` is the
-    /// name the skin declares for itself, so two skins never read each other's choices; the core
-    /// stores the value without ever looking at what it means.
+    /// One of the skin's own preferences, saved under the skin's name (`CoreOptions::skin`, see
+    /// `docs/SKINS.md`). The core stores the value without ever looking at what it means; the name
+    /// is established once at start, so a skin cannot write another skin's choices.
     SetPref {
-        skin: &'static str,
         key: &'static str,
         value: String,
     },
-}
-
-/// How a toast reads; the skin picks the colours.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tone {
-    Ok,
-    Info,
-    Error,
 }
 
 /// Things the core needs the skin to show.
@@ -216,12 +205,11 @@ pub enum Tone {
 pub enum Event {
     /// The person asked to boost and wants a summary first: show this plan, then send `ConfirmBoost`
     /// or `CancelBoost`. The plan is a snapshot for exactly that game, made when it was asked for.
-    ConfirmBoost {
-        game: Option<GameId>,
-        plan: Plan,
-    },
+    ConfirmBoost { game: Option<GameId>, plan: Plan },
     Toast {
-        tone: Tone,
+        /// The same tone vocabulary as the activity log: `OK`, `WARN`, `ERROR`, or no tone bit for a
+        /// plain message. The skin picks the colours.
+        tone: Tags,
         text: String,
     },
     /// After a close request: everything is restored and saved; close the window now.

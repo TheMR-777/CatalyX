@@ -4,10 +4,8 @@
 use crate::gui::icons::Ico;
 use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, EditTarget, PickFor, Tab};
-use catalyx_core::app::{window, Intent};
+use catalyx_core::app::{window, Installed, Intent, Phase};
 use catalyx_core::config::Game;
-use catalyx_core::engine::Phase;
-use catalyx_core::library;
 use egui::{vec2, Align, Layout, RichText, ScrollArea, Ui};
 use std::collections::HashMap;
 
@@ -146,7 +144,7 @@ fn installed_list(app: &mut CatalyxApp, ui: &mut Ui) {
                     });
                 }
             });
-            let missing: Vec<library::Installed> =
+            let missing: Vec<Installed> =
                 list.iter().filter(|it| !app.v.config.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&it.launch))).cloned().collect();
             if missing.len() > 1 {
                 ui.add_space(6.0);

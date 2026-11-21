@@ -1,7 +1,10 @@
 //! Window helpers a skin may use, so it needs no `unsafe` or process handling of its own (docs/SKINS.md,
 //! "Window helpers"). They change nothing outside the window.
 
-use crate::ffi;
+use crate::{ffi, shell};
+
+/// The shortcut that brings the desktop back after Quiet desktop switched it off.
+pub const EXIT_KEYS: &str = shell::EXIT_KEYS;
 
 /// What a file dialog asks for.
 pub struct FileDialog {
@@ -22,4 +25,14 @@ pub fn pick_file(d: FileDialog, done: impl FnOnce(Option<String>) + Send + 'stat
 /// Opens a folder in Explorer.
 pub fn open_folder(path: impl AsRef<std::ffi::OsStr>) {
     let _ = std::process::Command::new("explorer").arg(path).spawn();
+}
+
+/// Rounded corners and the shadow for a borderless window (Windows 11), once it exists.
+pub fn style_borderless_window() -> bool {
+    ffi::style_borderless_window()
+}
+
+/// Whether Windows itself is set to dark app mode (`appearance = system` follows it).
+pub fn system_prefers_dark() -> bool {
+    ffi::system_prefers_dark()
 }

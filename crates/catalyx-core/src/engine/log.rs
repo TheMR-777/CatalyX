@@ -15,6 +15,9 @@ use std::fmt;
 pub struct Tags(u16);
 
 impl Tags {
+    /// No bit at all: the plain, factual line and the neutral toast.
+    pub const NONE: Tags = Tags(0);
+
     // ---- how it went (at most one)
     /// The change was made and checked (or the game was found): the good news.
     pub const OK: Tags = Tags(1 << 0);

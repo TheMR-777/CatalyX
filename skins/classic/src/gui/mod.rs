@@ -19,10 +19,7 @@ pub mod prefs;
 mod theme;
 mod widgets;
 
-use catalyx_core::app::{self, Core, CoreOptions, Event, Hint, Intent, Interest, View};
-use catalyx_core::config::Config;
-use catalyx_core::engine::Phase;
-use catalyx_core::{ffi, procs};
+use catalyx_core::app::{self, CheckPage, Core, CoreOptions, Drawn, Event, Hint, Intent, Interest, Origin, Phase, View};
 use egui::{vec2, Align, Context, Layout, RichText};
 use egui_components::Toasts;
 use icons::Ico;
@@ -68,10 +65,8 @@ pub enum PickFor {
 }
 
 pub struct Options {
-    pub demo_session: bool,
-    pub selftest: Option<String>,
-    pub screenshot: Option<String>,
-    pub tour: Option<String>,
+    /// The core's own flags (screenshot, tour, self-test, demo, size), parsed once in `app::Options`.
+    pub run: app::Options,
     pub tab: Option<Tab>,
     pub theme: Option<String>,
     pub appearance: Option<String>,
@@ -80,8 +75,7 @@ pub struct Options {
     pub control: Option<String>,
     /// "boost": open the boost summary dialog (for screenshots).
     pub dialog: Option<String>,
-    pub size: Option<(f32, f32)>,
-    pub demo: bool,
+    pub size: Option<(u32, u32)>,
 }
 
 pub struct CatalyxApp {
@@ -114,7 +108,6 @@ pub struct CatalyxApp {
     may_close: bool,
     // checks
     pub drawn: HashSet<&'static str>,
-    selftest: Option<crate::selftest::SelfTest>,
     opts: Options,
     /// When the window started, for check runs that must wait for the layout to settle.
     started: Instant,
@@ -128,39 +121,26 @@ impl CatalyxApp {
         catalyx_core::trace::mark("window and GL context ready");
         theme::install_fonts(&cc.egui_ctx);
         catalyx_core::trace::mark("fonts installed");
-        let no_save = opts.screenshot.is_some() || opts.tour.is_some() || opts.demo || opts.selftest.is_some();
-        let check_run = opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some();
-        // The look flags of check runs are this skin's own settings: applied once, never saved for them.
-        let (theme_o, appearance_o, control_o, accent_o) =
-            (opts.theme.clone(), opts.appearance.clone(), opts.control.clone(), opts.accent.clone());
+        let origin = opts.run.origin();
+        let no_save = origin != Origin::User;
+        let check_run = origin.check();
         let dialog_boost = opts.dialog.as_deref() == Some("boost");
-        let prepare = move |cfg: &mut Config| {
-            // Check-run look flags are this skin's preferences like any other: they go through the
-            // same keys the Settings page writes, and the run never saves them.
-            if let Some(t) = &theme_o {
-                cfg.set_pref(prefs::NAME, prefs::THEME, ThemeId::from_key(t).key());
-            }
-            if let Some(a) = &appearance_o {
-                cfg.set_pref(prefs::NAME, prefs::APPEARANCE, prefs::Appearance::from_key(a).key());
-            }
-            if dialog_boost {
-                cfg.onboarded = true;
-            }
-            if let Some(c) = &control_o {
-                cfg.set_pref(prefs::NAME, prefs::CONTROL, control::Style::from_key(c).key());
-            }
-            if let Some(a) = &accent_o {
-                cfg.set_pref(prefs::NAME, prefs::ACCENT, AccentId::from_key(a).key());
-            }
-        };
-        let core = Core::start(CoreOptions {
-            no_save,
-            demo: opts.demo,
-            demo_session: opts.demo_session,
-            selftest: opts.selftest.is_some(),
-            check_run,
-            prepare: Some(Box::new(prepare)),
-        });
+        // The look flags of check runs are this skin's own settings, applied before the first frame
+        // and never saved for the run: they go through the same keys the Settings page writes.
+        let mut start_prefs: Vec<(String, String)> = Vec::new();
+        if let Some(t) = &opts.theme {
+            start_prefs.push((prefs::THEME.into(), ThemeId::from_key(t).key().into()));
+        }
+        if let Some(a) = &opts.appearance {
+            start_prefs.push((prefs::APPEARANCE.into(), prefs::Appearance::from_key(a).key().into()));
+        }
+        if let Some(c) = &opts.control {
+            start_prefs.push((prefs::CONTROL.into(), control::Style::from_key(c).key().into()));
+        }
+        if let Some(a) = &opts.accent {
+            start_prefs.push((prefs::ACCENT.into(), AccentId::from_key(a).key().into()));
+        }
+        let core = Core::start(CoreOptions { origin, skin: prefs::NAME, prefs: start_prefs });
         let wake_ctx = cc.egui_ctx.clone();
         core.connect(move || wake_ctx.request_repaint());
         let v = core.view();
@@ -173,7 +153,7 @@ impl CatalyxApp {
             toasts: Toasts::new(),
             picked_tx,
             picked_rx,
-            sys_dark: ffi::system_prefers_dark(),
+            sys_dark: app::window::system_prefers_dark(),
             last_sys_check: Instant::now(),
             palette_key: None,
             titlebar_for: None,
@@ -185,7 +165,6 @@ impl CatalyxApp {
             last_minimised: false,
             may_close: false,
             drawn: HashSet::new(),
-            selftest: opts.selftest.clone().map(crate::selftest::SelfTest::new),
             opts,
             started: Instant::now(),
             frames: 0,
@@ -201,10 +180,10 @@ impl CatalyxApp {
             app.confirm = Some(pages::Confirm::Welcome);
         }
         if dialog_boost {
-            // A real game, by id: the summary has to describe something.
+            // A real game, by id: the summary has to describe something. It goes through the core's
+            // own policy, exactly as a person's click does.
             let first = app.v.config.games.first().map(|g| g.id.clone());
-            app.core.show_boost_summary(first);
-            app.drain_events();
+            app.send(Intent::Boost { game: first });
         }
         app
     }
@@ -250,11 +229,17 @@ impl CatalyxApp {
     fn drain_events(&mut self) {
         for e in self.core.take_events() {
             match e {
-                Event::Toast { tone, text } => match tone {
-                    app::Tone::Ok => self.toast_ok(text),
-                    app::Tone::Info => self.toast_info(text),
-                    app::Tone::Error => self.toast_err(text),
-                },
+                Event::Toast { tone, text } => {
+                    // One tone vocabulary for toasts and the log: OK is good news, WARN and ERROR
+                    // need attention, no tone bit is the plain message.
+                    if tone.has(app::Tags::OK) {
+                        self.toast_ok(text);
+                    } else if tone.has(app::Tags::WARN) || tone.has(app::Tags::ERROR) {
+                        self.toast_err(text);
+                    } else {
+                        self.toast_info(text);
+                    }
+                }
                 Event::ConfirmBoost { game, plan } => {
                     self.boost_dont_ask = false;
                     self.confirm = Some(pages::Confirm::Boost { game, plan });
@@ -336,14 +321,14 @@ impl CatalyxApp {
 
     /// Rounded corners and the drop shadow for the borderless window, once the window exists.
     fn sync_titlebar(&mut self) {
-        if self.titlebar_for.is_none() && ffi::style_borderless_window() {
+        if self.titlebar_for.is_none() && app::window::style_borderless_window() {
             self.titlebar_for = Some((true, 0));
         }
     }
 
     /// A check run (screenshot, tour or self-test) photographs a fixed frame.
     fn checking(&self) -> bool {
-        self.opts.screenshot.is_some() || self.opts.tour.is_some() || self.opts.selftest.is_some()
+        self.opts.run.check()
     }
 
     fn apply_theme_if_needed(&mut self) {
@@ -409,7 +394,7 @@ impl eframe::App for CatalyxApp {
             let now = Instant::now();
             if now.duration_since(self.last_sys_check) > Duration::from_secs(3) {
                 self.last_sys_check = now;
-                self.sys_dark = ffi::system_prefers_dark();
+                self.sys_dark = app::window::system_prefers_dark();
             }
             ctx.request_repaint_after((self.last_sys_check + Duration::from_secs(3)).saturating_duration_since(now));
         }
@@ -433,13 +418,27 @@ impl eframe::App for CatalyxApp {
             self.send(Intent::AddGame { path, name: None, args: String::new(), real_exe: None });
         }
         self.run_checks(ctx);
-        if let Some(mut t) = self.selftest.take() {
-            // The self-test keeps the window drawing so its stages advance.
+        if self.opts.run.selftest() {
+            // The self-test keeps the window drawing while its stages advance; the steps, the stand-in
+            // game and the report live in the core. This skin only shows the page it asks for and says
+            // which pages it has drawn.
             ctx.request_repaint_after(Duration::from_millis(40));
-            if t.step_frame(self) {
+            if let Some(page) = self.core.selftest_page() {
+                self.tab = match page {
+                    CheckPage::Apps => Tab::Apps,
+                    CheckPage::Games => Tab::Games,
+                    CheckPage::Boost => Tab::Boost,
+                };
+            }
+            let d = &self.drawn;
+            let drawn = Drawn {
+                apps: d.contains("apps"),
+                games: d.contains("games"),
+                boost: d.contains("stats") && d.contains("session") && d.contains("boost_control"),
+            };
+            if self.core.selftest_step(drawn) {
                 std::process::exit(0);
             }
-            self.selftest = Some(t);
         }
     }
 
@@ -493,14 +492,14 @@ impl eframe::App for CatalyxApp {
 
 /// Opens the window.
 pub fn run(opts: Options) -> Result<(), String> {
-    let size = opts.size.unwrap_or((1180.0, 760.0));
+    let size = opts.size.map(|(w, h)| (w as f32, h as f32)).unwrap_or((1180.0, 760.0));
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CatalyX")
             .with_inner_size(vec2(size.0, size.1))
             .with_min_inner_size(vec2(760.0, 560.0))
             .with_decorations(false)
-            .with_visible(opts.screenshot.is_some() || opts.tour.is_some() || opts.selftest.is_some())
+            .with_visible(opts.run.check())
             .with_icon(app_icon())
             .with_drag_and_drop(true),
         renderer: eframe::Renderer::Glow,

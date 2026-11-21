@@ -200,7 +200,7 @@ impl Cli {
                     k.apps_paused,
                     k.apps_lowered,
                     k.services_stopped,
-                    procs::fmt_mem(k.ram_freed),
+                    crate::format::mem(k.ram_freed),
                     if dry { " (test run, nothing changed)" } else { "" }
                 );
                 return Ok(());
@@ -259,8 +259,8 @@ impl Cli {
         println!(
             "CPU {:>5.1}%   RAM {} / {}   GPU {:>3.0}%",
             s.cpu_total,
-            procs::fmt_mem(s.mem_used),
-            procs::fmt_mem(s.mem_total),
+            crate::format::mem(s.mem_used),
+            crate::format::mem(s.mem_total),
             s.gpu_total
         );
         println!(
@@ -271,7 +271,7 @@ impl Cli {
         println!();
         println!("{:<34} {:>7} {:>7} {:>10} {:>5}", "Busiest apps", "pid", "CPU", "Memory", "GPU");
         for p in &top {
-            println!("{:<34} {:>7} {:>6.1}% {:>10} {:>4.0}%", trunc(&p.name, 34), p.pid, p.cpu, procs::fmt_mem(p.mem), p.gpu);
+            println!("{:<34} {:>7} {:>6.1}% {:>10} {:>4.0}%", trunc(&p.name, 34), p.pid, p.cpu, crate::format::mem(p.mem), p.gpu);
         }
         Ok(())
     }

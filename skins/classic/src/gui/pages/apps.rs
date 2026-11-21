@@ -10,7 +10,7 @@ use crate::gui::CatalyxApp;
 use catalyx_core::app::Intent;
 use catalyx_core::catalog;
 use catalyx_core::config::{app_is_protected, Config, ProcAction};
-use catalyx_core::procs;
+use catalyx_core::format;
 use egui::{pos2, vec2, Align, Align2, FontId, Layout, Rect, RichText, ScrollArea, Sense, Ui};
 use std::collections::HashMap;
 
@@ -320,7 +320,7 @@ fn row(
         if show_cpu {
             cols.push((format!("{:.1}%", r.cpu), 52.0, if r.cpu > 15.0 { p.warn } else { p.dim }));
         }
-        cols.push((procs::fmt_mem(r.mem), 72.0, if r.mem > 1_500_000_000 { p.warn } else { p.dim }));
+        cols.push((format::mem(r.mem), 72.0, if r.mem > 1_500_000_000 { p.warn } else { p.dim }));
         if show_gpu {
             cols.push((format!("{:.0}%", r.gpu), 44.0, if r.gpu > 20.0 { p.warn } else { p.dim }));
         }

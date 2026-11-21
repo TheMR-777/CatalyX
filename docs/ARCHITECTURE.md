@@ -7,16 +7,16 @@ background daemon.
 ```
 Cargo.toml             workspace: the version, the dependency versions, one build profile
 crates/catalyx-core/   everything that is not drawing (serde, serde_json, sysinfo, winreg; no egui)
-  lib.rs               the public surface: one line per module
+  lib.rs               the public surface (app, config, catalog, format, start, trace); every other module is private
   start.rs             what either front-end does first (trace, console, hooks) and the check-run watchdog
   bin/catalyx-cli.rs   front-end 1: catalyx-cli.exe, the console program (scripts, pipes, agents)
-  app/                 the core behind the window: state, intents, view, settings catalogue, boost description, jobs, upkeep
+  app/                 the core behind the window: state, intents, options, view, settings catalogue, boost description, jobs, upkeep, selftest
   cli/                 every command (mod = parsing + dispatch; one file per area)
   engine/              the boost engine (own thread): the heart of the program
   config/              settings, presets, the app/service lists, the saved config file
   trace.rs             optional start-up timing (CATALYX_TRACE=1)
   shell.rs             the quiet desktop: stop/start explorer.exe, the exit shortcut, the guard
-  procs.rs             the process monitor (own thread) and per-process operations
+  procs/               the process monitor (own thread), the shared sample; act.rs holds the per-process actions
   services.rs          Windows services: list, stop (with dependents), start
   power.rs             power plans through powercfg
   tweaks.rs            registry and scheduled-task changes, each remembering the old value
@@ -29,12 +29,12 @@ crates/catalyx-core/   everything that is not drawing (serde, serde_json, sysinf
   doctor.rs            `catalyx doctor`: proves each feature against real Windows state
   ffi.rs               hand-written Win32 bindings used across the program
 skins/classic/         the window: the only package that links egui/eframe
-  lib.rs               the skin's entry: the window, from the command-line flags
+  lib.rs               the skin's entry: reads its own flags from the core's parsed options
   gui/                 the egui window: pages/, chrome (title bar + sidebar), control (the boost control), theme, widgets, the mark
-  selftest.rs          the window's built-in end-to-end check
 app/                   the window program
   main.rs              front-end 2: catalyx.exe (no console, never a terminal), and the one line that picks the skin
-  build.rs             embeds assets/catalyx.ico as the program icon (no SDK resource compiler needed)
+  assets/catalyx.ico   the program's icon, beside the package that embeds it
+  build.rs             embeds it as the program icon (no SDK resource compiler needed)
 ```
 
 ## Threads and processes
@@ -55,7 +55,7 @@ A monitor sample is shared as an `Arc<Snapshot>` (`procs::latest` / `procs::publ
 Arc clone under a short lock, so reading never copies the process list and never keeps the sampler waiting
 while a few hundred rows are duplicated. A sample a reader holds cannot change under it; the next one is a
 new allocation. That is what makes it safe for the engine to hold a sample across a long Windows call while
-the window keeps drawing, and it is asserted in `procs.rs`'s tests.
+the window keeps drawing, and it is asserted in `procs/mod.rs`'s tests.
 
 ## The engine
 
@@ -107,4 +107,4 @@ scratch folder; the built-in checks and the tests always use it.
 
 `--screenshot <png> [--tab X --size WxH --accent A --appearance dark|light --demo-session]`, `--tour <dir>`
 and `--self-test <json>` run the real window with demo data and a scratch data folder, under a 110-second
-watchdog so a stuck check can never hang its caller. `--write-icon <path>` regenerates `assets/catalyx.ico`.
+watchdog so a stuck check can never hang its caller. `--write-icon <path>` regenerates `app/assets/catalyx.ico`.

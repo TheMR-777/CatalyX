@@ -54,11 +54,13 @@ Details in `docs/DEVELOPING.md`.
 
 Three packages in one workspace (`Cargo.toml` holds the version, the dependency versions and the profile):
 `app/src/main.rs` the window program (the command line, then the one line that picks the skin) | `skins/classic/`
-the window (`src/gui/` pages, chrome, theme, widgets, mark; `src/selftest.rs` the end-to-end check) |
-`crates/catalyx-core/` everything else: `src/app/` the state behind the window, `src/cli/` commands, `src/engine/`
-the boost engine (types, journal, boost, apply, running, restore, desktop), `src/config/` settings, presets, lists,
-`src/shell.rs` quiet desktop, `src/procs.rs` monitor, `src/services.rs` `power.rs` `tweaks.rs` `gpu.rs` Windows
-operations, `src/ffi.rs` Win32 bindings, `src/bin/catalyx-cli.rs` the console program. The core links no egui.
+the window (`src/gui/` pages, chrome, theme, widgets, mark) |
+`crates/catalyx-core/` everything else: `src/app/` the state behind the window (including the self-test),
+`src/cli/` commands, `src/engine/` the boost engine (types, journal, boost, apply, running, restore, desktop),
+`src/config/` settings, presets, lists, `src/shell.rs` quiet desktop, `src/procs/` monitor and per-process
+actions, `src/services.rs` `power.rs` `tweaks.rs` `gpu.rs` Windows operations, `src/ffi.rs` Win32 bindings,
+`src/bin/catalyx-cli.rs` the console program. The core links no egui, and only `app`, `config`, `catalog`,
+`format`, `start` and `trace` are public: a skin cannot reach Windows (see `lib.rs`).
 Full table with responsibilities: `docs/ARCHITECTURE.md`.
 
 ## Rules that must not be broken
@@ -90,7 +92,8 @@ Full table with responsibilities: `docs/ARCHITECTURE.md`.
    (docs/DECISIONS.md, Compatibility): bump `CONFIG_VERSION` when the saved shape changes in a way a reader must
    not guess at, and a file with any other version is set aside (`config.json.old`) with defaults used. Never
    overwrite a person's own presets or per-game settings.
-4. `skins/classic/src/selftest.rs`: it builds a `Settings` literal; add the field.
+4. `crates/catalyx-core/src/app/selftest.rs`: it builds a `Settings` literal (the stand-in game uses
+   priority only); add the field.
 5. `crates/catalyx-core/src/app/spec.rs`: one row in `SETTINGS` (key, label, hint, group, administrator need, CLI order, help position,
    kind). The CLI's `show`/`set`, the `help` KEYS block and the classic Profiles form read it; do not list the
    setting anywhere else. A new CLI token or alias also belongs in that row: `spec::set` is the only parser for both
@@ -141,5 +144,5 @@ dark)`. Check every visual change in dark and light and at the minimum size (760
 
 Rust 2021, `cargo fmt` as configured, clippy clean. Comments say *why*, not what. Every OS call can fail:
 handle it, log it, and fail closed (skip the change) rather than half-apply. Keep `unsafe` inside thin
-wrappers in `ffi.rs`, `shell.rs`, `procs.rs`, `gpu.rs`. User-facing text is plain and friendly, no jargon
+wrappers in `ffi.rs`, `shell.rs`, `procs/`, `gpu.rs`. User-facing text is plain and friendly, no jargon
 without a hint line.

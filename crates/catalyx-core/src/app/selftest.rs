@@ -1,24 +1,44 @@
-//! `--self-test <file.json>`: runs the core loop inside the real window, in three steps, and writes
-//! the result as JSON:
-//!   move - the pages can be switched and the Apps page lists what is running,
+//! `--self-test <file.json>`: the boost/restore half of the check run, in the core, so every skin
+//! gets it and none has to reach for Windows. The skin only shows frames and reports which pages it
+//! drew; the steps, the stand-in game, the priority read-back and the report all live here.
+//!
+//!   move - the window showed Apps (with a real list) and then Games,
 //!   act  - a real boost of a `.bat` game: the program behind the batch file is found, its
 //!          priority really becomes High (read back from Windows), and is put back afterwards,
-//!   hud  - the live meters, the boost control and the session card are drawn.
+//!   hud  - the Boost page was drawn with live readings.
 //!
-//! It can never hang: every stage has its own time limit, and `finish` is also reached by an
-//! independent watchdog thread (see `catalyx_core::start::begin_check_run`) that ends the process
-//! whatever the window does.
+//! It can never hang: every stage has its own limit, and `catalyx_core::start::begin_check_run`
+//! starts an independent watchdog that ends the process whatever the window does.
 //! Only the self-test's own stand-in game is touched; nothing else on the PC changes.
 
-use crate::gui::{CatalyxApp, Tab};
-use catalyx_core::app::Intent;
-use catalyx_core::engine::Phase;
-use catalyx_core::{ffi, procs};
+use super::intent::Intent;
+use super::state::State;
+use crate::engine::Phase;
+use crate::{ffi, format, procs};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
+/// What a check run asks the window to show. About a run, not a product: a skin without these
+/// pages can ignore it, and the report will say what it saw.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CheckPage {
+    Apps,
+    Games,
+    Boost,
+}
+
+/// Which pages a skin has drawn since it started, for a check run. Every skin can answer this; it
+/// says nothing about how the page is built.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Drawn {
+    pub apps: bool,
+    pub games: bool,
+    pub boost: bool,
+}
+
 pub struct SelfTest {
     out: String,
+    page: Option<CheckPage>,
     stage: u32,
     stage_frames: u32,
     stage_started: Instant,
@@ -38,6 +58,7 @@ impl SelfTest {
     pub fn new(out: String) -> Self {
         SelfTest {
             out,
+            page: None,
             stage: 0,
             stage_frames: 0,
             stage_started: Instant::now(),
@@ -54,17 +75,22 @@ impl SelfTest {
         }
     }
 
+    /// The page the run needs on screen next, if it has moved on from the one it asked for.
+    pub fn page(&self) -> Option<CheckPage> {
+        self.page
+    }
+
     fn next(&mut self) {
         self.stage += 1;
         self.stage_frames = 0;
         self.stage_started = Instant::now();
     }
 
-    fn step(&mut self, name: &str, passed: bool, detail: String) {
+    fn record(&mut self, name: &str, passed: bool, detail: String) {
         self.steps.push(json!({"step": name, "passed": passed, "detail": detail}));
     }
 
-    pub fn finish(&self) {
+    fn finish(&self) {
         let v = json!({"version": 1, "steps": self.steps});
         if let Some(dir) = std::path::Path::new(&self.out).parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -72,61 +98,57 @@ impl SelfTest {
         let _ = std::fs::write(&self.out, serde_json::to_string_pretty(&v).unwrap_or_default());
     }
 
-    /// Called once per frame. Returns true when the test is complete (the caller exits).
-    pub fn step_frame(&mut self, app: &mut CatalyxApp) -> bool {
+    /// One window frame. Returns true when the report is written and the caller should exit.
+    pub(super) fn step(&mut self, state: &mut State, drawn: Drawn) -> bool {
         self.stage_frames += 1;
         let waited = self.stage_started.elapsed();
+        let snap = procs::latest(&state.snap);
         match self.stage {
             // Wait for the first live readings.
             0 => {
-                let ready = app.v.snap.serial >= 2 && !app.v.snap.procs.is_empty();
+                let ready = snap.serial >= 2 && !snap.procs.is_empty();
                 if ready || waited > Duration::from_secs(15) {
-                    app.tab = Tab::Apps;
+                    self.page = Some(CheckPage::Apps);
                     self.next();
                 }
             }
             // move: Apps (with a real list), then Games.
             1 => {
                 if self.stage_frames == 6 {
-                    let rows = app.v.snap.procs.len();
-                    let drawn = app.drawn.contains("apps");
-                    self.apps_ok = drawn && rows > 0 && app.tab == Tab::Apps;
-                    self.apps_rows = rows;
-                    app.tab = Tab::Games;
+                    self.apps_rows = snap.procs.len();
+                    self.apps_ok = drawn.apps && self.apps_rows > 0;
+                    self.page = Some(CheckPage::Games);
                 }
                 if self.stage_frames == 12 {
-                    let ok = app.tab == Tab::Games && app.drawn.contains("games");
-                    self.step(
-                        "move",
-                        ok && self.apps_ok,
-                        format!(
-                            "switched to Apps (it listed {} running programs) and then to Games (now on {:?})",
-                            self.apps_rows, app.tab
-                        ),
-                    );
-                    self.start_act(app);
+                    let ok = drawn.games && self.apps_ok;
+                    self.record("move", ok, format!("showed Apps (it listed {} running programs) and then Games", self.apps_rows));
+                    self.start_act(state);
                     self.next();
                 }
             }
             // act: boost a .bat game for real (priority only) and watch it through.
             2 => {
-                let st = app.v.status.clone();
-                if !st.game_exe.is_empty() && self.found.is_empty() {
-                    self.found = st.game_exe.clone();
-                    let snap = app.v.snap.clone();
+                // Read the handful of facts this needs and drop the lock: no clone of the whole
+                // status (the activity log grows while a boost runs).
+                let (game_exe, game_pid, priority_done, phase, restored) = match state.status.lock() {
+                    Ok(s) => (s.game_exe.clone(), s.game_pid, s.counts.game_priority, s.phase, s.restored_runs),
+                    Err(_) => return false,
+                };
+                if !game_exe.is_empty() && self.found.is_empty() {
+                    self.found = game_exe;
                     self.helper = snap
-                        .find(st.game_pid)
+                        .find(game_pid)
                         .filter(|p| p.name_lower == "catalyx-testgame.exe" && p.start + 3 >= self.launched_at)
                         .map(|p| (p.pid, p.start));
                 }
-                if self.priority_seen.is_none() && st.counts.game_priority && st.game_pid != 0 {
-                    self.priority_seen = procs::get_priority(st.game_pid);
+                if self.priority_seen.is_none() && priority_done && game_pid != 0 {
+                    self.priority_seen = procs::get_priority(game_pid);
                 }
                 if !self.restore_sent && (self.priority_seen.is_some() || (!self.found.is_empty() && waited > Duration::from_secs(14))) {
-                    app.send(Intent::Restore);
+                    state.apply(Intent::Restore);
                     self.restore_sent = true;
                 }
-                let done = (self.restore_sent && st.phase == Phase::Idle && st.restored_runs > 0) || waited > Duration::from_secs(30);
+                let done = (self.restore_sent && phase == Phase::Idle && restored > 0) || waited > Duration::from_secs(30);
                 if done {
                     let after = self.helper.and_then(|(pid, _)| procs::get_priority(pid));
                     let high = ffi::HIGH_PRIORITY_CLASS;
@@ -135,7 +157,7 @@ impl SelfTest {
                         && self.helper.is_some()
                         && self.priority_seen == Some(high)
                         && back
-                        && st.phase == Phase::Idle;
+                        && phase == Phase::Idle;
                     let detail = if self.found.is_empty() {
                         format!(
                             "boosted the test game but the real program behind the batch file was not found in {:.0}s",
@@ -149,24 +171,22 @@ impl SelfTest {
                             match after { Some(c) if c == ffi::NORMAL_PRIORITY_CLASS => "Normal again".to_string(), Some(c) => format!("0x{c:x} (not put back)"), None => "the program had ended".to_string() },
                         )
                     };
-                    self.step("act", ok, detail);
-                    self.cleanup(app);
-                    app.tab = Tab::Boost;
+                    self.record("act", ok, detail);
+                    self.cleanup(state);
+                    self.page = Some(CheckPage::Boost);
                     self.next();
                 }
             }
-            // hud: the Boost page with its meters, button and session card.
+            // hud: the Boost page with its live readings.
             3 if self.stage_frames >= 10 => {
-                let snap = app.v.snap.clone();
-                let d = &app.drawn;
-                let ok = d.contains("stats") && d.contains("session") && d.contains("boost_control") && snap.serial >= 2;
-                self.step(
+                let ok = drawn.boost && snap.serial >= 2;
+                self.record(
                     "hud",
                     ok,
                     format!(
-                        "CPU {:.0}%, RAM {}, GPU {:.0}% meters, the boost control and the session card are drawn ({} apps listed)",
+                        "the Boost page is drawn: CPU {:.0}%, RAM {}, GPU {:.0}% meters ({} programs listed)",
                         snap.cpu_total,
-                        procs::fmt_mem(snap.mem_used),
+                        format::mem(snap.mem_used),
                         snap.gpu_total,
                         snap.procs.len()
                     ),
@@ -177,15 +197,15 @@ impl SelfTest {
             _ => {}
         }
         if self.started.elapsed() > Duration::from_secs(90) {
-            self.step("timeout", false, "self-test took longer than 90 seconds".into());
-            self.cleanup(app);
+            self.record("timeout", false, "self-test took longer than 90 seconds".into());
+            self.cleanup(state);
             self.finish();
             return true;
         }
         false
     }
 
-    fn start_act(&mut self, app: &mut CatalyxApp) {
+    fn start_act(&mut self, state: &mut State) {
         let dir = std::env::temp_dir().join("catalyx-selftest");
         let _ = std::fs::create_dir_all(&dir);
         let bat = dir.join("start_game.bat");
@@ -194,10 +214,10 @@ impl SelfTest {
         let _ = std::fs::copy(format!("{sys}\\System32\\PING.EXE"), dir.join("catalyx-testgame.exe"));
         let _ = std::fs::write(&bat, "@echo off\r\nrem test launcher: the real program is started by this batch file\r\n\"%~dp0catalyx-testgame.exe\" -n 16 127.0.0.1 >nul\r\n");
         // A real boost, but only of the one thing that dies with the test: the stand-in's own priority.
-        let only_priority = catalyx_core::config::Settings {
-            priority: catalyx_core::config::Priority::High,
-            power: catalyx_core::config::PowerChoice::Keep,
-            cpu: catalyx_core::config::CpuLevel::Off,
+        let only_priority = crate::config::Settings {
+            priority: crate::config::Priority::High,
+            power: crate::config::PowerChoice::Keep,
+            cpu: crate::config::CpuLevel::Off,
             apps: false,
             services: false,
             clean_ram: false,
@@ -210,32 +230,31 @@ impl SelfTest {
             pause_maintenance: false,
             mmcss_games: false,
             no_power_throttling: false,
-            gpu: catalyx_core::config::GpuLevel::Off,
+            gpu: crate::config::GpuLevel::Off,
             lower_others: false,
             quiet_desktop: false,
         };
-        // The boost goes through the core like any other, without the summary (this run's config is never
-        // saved); the engine knows the stand-in by its id "selftest".
-        app.send(Intent::SetOption { key: "confirm-boost".into(), value: "off".into() });
-        app.core.add_selftest_game(catalyx_core::config::Game {
+        // The boost goes through the core like any other, without the summary (this run's config is
+        // never saved); the engine knows the stand-in by its id "selftest".
+        state.apply(Intent::SetOption { key: "confirm-boost".into(), value: "off".into() });
+        state.add_selftest_game(crate::config::Game {
             id: "selftest".into(),
             name: "Self-test game".into(),
             launch: bat.to_string_lossy().to_string(),
-            preset: catalyx_core::config::PRESET_MAX.into(),
+            preset: crate::config::PRESET_MAX.into(),
             custom: Some(only_priority),
             ..Default::default()
         });
         self.bat = Some(bat);
         self.launched_at = procs::now_secs();
-        app.send(Intent::Boost { game: Some("selftest".into()) });
-        app.tab = Tab::Boost;
+        state.apply(Intent::Boost { game: Some("selftest".into()) });
     }
 
     /// Stop only the stand-in we started (and the batch shell that started it), then delete its files.
-    fn cleanup(&mut self, app: &mut CatalyxApp) {
+    fn cleanup(&mut self, state: &mut State) {
         if let Some((pid, start)) = self.helper.take() {
             if procs::same_process(pid, start) {
-                let snap = app.v.snap.clone();
+                let snap = procs::latest(&state.snap);
                 if let Some(p) = snap.find(pid) {
                     if let Some(cmd) =
                         snap.procs.iter().find(|c| c.pid == p.parent && c.name_lower == "cmd.exe" && c.start + 3 >= self.launched_at)

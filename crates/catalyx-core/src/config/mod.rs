@@ -18,6 +18,10 @@ pub use settings::*;
 /// Bump it when the saved shape changes in a way a reader must not guess at.
 pub const CONFIG_VERSION: u32 = 6;
 
+/// The heat limits the settings offer (`catalyx heat-limit`, Tuning). Clocks go back to normal above
+/// the chosen temperature; a value outside this list is never accepted, whichever front-end sends it.
+pub const HEAT_LIMITS: [u32; 4] = [75, 80, 83, 87];
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(default)]
 pub struct Game {

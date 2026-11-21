@@ -2,8 +2,9 @@
 //! link, probes and their results, the boost policy), and `apply`, which carries out an intent.
 
 use super::boost::{self, BoostView};
-use super::intent::{Event, GameId, Hint, Intent, Interest, PresetId, Tone};
+use super::intent::{Event, GameId, Hint, Intent, Interest, PresetId};
 use super::jobs::{Done, Job};
+use super::selftest::{CheckPage, Drawn, SelfTest};
 use super::spec::{self, Target};
 use super::view::{Hardware, Library, System, View};
 use crate::config::{Config, Game, Preset, ProcAction};
@@ -32,8 +33,11 @@ pub struct State {
     pub(super) cfg: Arc<Config>,
     pub(super) dirty_since: Option<Instant>,
     pub(super) no_save: bool,
-    /// The self-test drives this run: no memory trims (they would disturb its measurements).
-    pub(super) selftest: bool,
+    /// The skin whose preferences `Intent::SetPref` writes: established once at start.
+    pub(super) skin: &'static str,
+    /// The self-test, when one drives this run (check runs only). While it runs there are no memory
+    /// trims: they would disturb its measurements.
+    pub(super) selftest: Option<SelfTest>,
     /// A check run (screenshot, tour, self-test): per-process figures always on.
     pub(super) check_run: bool,
     pub(super) tx: Sender<Cmd>,
@@ -95,8 +99,9 @@ impl State {
     pub(super) fn new(
         cfg: Config,
         no_save: bool,
-        selftest: bool,
+        selftest: Option<SelfTest>,
         check_run: bool,
+        skin: &'static str,
         tx: Sender<Cmd>,
         status: SharedStatus,
         snap: SharedSnapshot,
@@ -106,6 +111,7 @@ impl State {
             cfg: Arc::new(cfg),
             dirty_since: None,
             no_save,
+            skin,
             selftest,
             check_run,
             tx,
@@ -118,7 +124,7 @@ impl State {
             services: Arc::new(Vec::new()),
             svc_busy: false,
             last_svc: None,
-            system: System { admin, elevation: None, elevation_busy: false, own_working_set: crate::ffi::own_working_set() },
+            system: System { admin, own_working_set: crate::ffi::own_working_set(), ..System::default() },
             library: Arc::new(Library::default()),
             auto_ignore: HashSet::new(),
             last_auto_scan: Instant::now(),
@@ -181,12 +187,25 @@ impl State {
         self.rev += 1;
     }
 
-    pub(super) fn toast(&mut self, tone: Tone, text: impl Into<String>) {
+    pub(super) fn toast(&mut self, tone: Tags, text: impl Into<String>) {
         self.event(Event::Toast { tone, text: text.into() });
     }
 
     pub(super) fn take_events(&mut self) -> Vec<Event> {
         self.events.drain(..).collect()
+    }
+
+    /// The page a self-test needs on screen next; None outside one.
+    pub(super) fn selftest_page(&self) -> Option<CheckPage> {
+        self.selftest.as_ref().and_then(SelfTest::page)
+    }
+
+    /// Advances a self-test by one window frame; true when its report is written.
+    pub(super) fn selftest_step(&mut self, drawn: Drawn) -> bool {
+        let Some(mut t) = self.selftest.take() else { return false };
+        let done = t.step(self, drawn);
+        self.selftest = Some(t);
+        done
     }
 
     /// Runs `job` on a worker thread once the lock is released; its result wakes the skin.
@@ -265,7 +284,7 @@ impl State {
                     if on {
                         // The window gets no more frames, so the 30 s timer must not be what does
                         // the trim that matters: trim once shortly after the last frame instead.
-                        self.trim_due = (!self.selftest).then(|| Instant::now() + super::upkeep::TRIM_AFTER_MINIMISE);
+                        self.trim_due = self.selftest.is_none().then(|| Instant::now() + super::upkeep::TRIM_AFTER_MINIMISE);
                     } else {
                         self.trim_due = None;
                     }
@@ -304,7 +323,6 @@ impl State {
         // This call is the skin drawing the current revision: it is not shown again for a sample.
         self.drawn_rev = self.rev;
         View {
-            rev: self.rev,
             config: self.cfg.clone(),
             status: self.status_view.clone(),
             snap: self.snap_view.clone(),
@@ -366,14 +384,16 @@ impl State {
             Intent::ClearServiceRules => self.clear_service_rules(),
             Intent::UseSuggestions { scope } => self.use_suggestions(scope),
             Intent::RefreshHardware => self.refresh_hardware(),
-            Intent::RefreshServices => self.refresh_services(),
             Intent::TestGraphicsCard => self.test_graphics_card(),
             Intent::UsePowerPlan { guid } => self.set_power_plan(guid),
             Intent::CreateBoostPlan { level } => self.create_boost_plan(level),
             Intent::SetHeatLimit { c } => {
-                let cfg = self.cfg_mut();
-                cfg.gpu_temp_limit_c = c;
-                self.mark_dirty();
+                // The same four steps the command line accepts: a skin cannot store a value the
+                // command line would refuse.
+                if crate::config::HEAT_LIMITS.contains(&c) {
+                    self.cfg_mut().gpu_temp_limit_c = c;
+                    self.mark_dirty();
+                }
             }
             Intent::FinishWelcome { use_suggestions } => self.finish_welcome(use_suggestions),
             Intent::SetupOneClickStart => self.run_elevated("elevate setup", "One-click administrator start is ready"),
@@ -390,7 +410,7 @@ impl State {
                     self.mark_dirty();
                 }
             }
-            Intent::SetPref { skin, key, value } => self.set_pref(skin, key, value),
+            Intent::SetPref { key, value } => self.set_pref(key, value),
         }
     }
 
@@ -632,16 +652,17 @@ impl State {
         // The dialog promises the suggestions, so apply them (they fill, never overwrite).
         apply_suggestions(cfg);
         self.mark_dirty();
-        self.toast(Tone::Ok, "Settings reset");
+        self.toast(Tags::OK, "Settings reset");
     }
 
-    /// A skin's own preference, stored under its name exactly as sent. The key means nothing here:
-    /// the skin validates its own values before sending them, and the one thing that cannot be
-    /// stored usefully (an empty key) is refused.
-    fn set_pref(&mut self, skin: &str, key: &str, value: String) {
-        if key.is_empty() || skin.is_empty() {
+    /// A skin's own preference, stored under the skin's established name exactly as sent. The key
+    /// means nothing here: the skin validates its own values before sending them, and the one thing
+    /// that cannot be stored usefully (an empty key) is refused.
+    fn set_pref(&mut self, key: &str, value: String) {
+        if key.is_empty() || self.skin.is_empty() {
             return;
         }
+        let skin = self.skin;
         self.cfg_mut().set_pref(skin, key, &value);
         self.mark_dirty();
     }
@@ -708,8 +729,8 @@ impl State {
         let req = self.request_for(game.as_ref(), None);
         let _ = self.tx.send(Cmd::Boost(Box::new(req)));
         match &game {
-            Some(g) => self.toast(Tone::Info, format!("Boosting and starting {}", g.name)),
-            None => self.toast(Tone::Info, "Gaming mode on"),
+            Some(g) => self.toast(Tags::NONE, format!("Boosting and starting {}", g.name)),
+            None => self.toast(Tags::NONE, "Gaming mode on"),
         }
         self.wake_skin();
     }
@@ -762,16 +783,16 @@ impl State {
         }
         let is_link = path.contains("://");
         if !is_link && !std::path::Path::new(&path).exists() {
-            self.toast(Tone::Error, format!("File not found: {path}"));
+            self.toast(Tags::ERROR, format!("File not found: {path}"));
             return;
         }
         let ext = std::path::Path::new(&path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         if !is_link && !matches!(ext.as_str(), "exe" | "bat" | "cmd" | "lnk" | "url") {
-            self.toast(Tone::Error, "Games are .exe, .bat, .cmd, shortcut (.lnk/.url) files or store links");
+            self.toast(Tags::ERROR, "Games are .exe, .bat, .cmd, shortcut (.lnk/.url) files or store links");
             return;
         }
         if self.cfg.games.iter().any(|g| g.launch.eq_ignore_ascii_case(&path)) {
-            self.toast(Tone::Info, "That game is already in your library");
+            self.toast(Tags::NONE, "That game is already in your library");
             return;
         }
         let name = name
@@ -791,7 +812,7 @@ impl State {
         });
         cfg.selected_game = cfg.games.len() - 1;
         self.mark_dirty();
-        self.toast(Tone::Ok, format!("Added {name}"));
+        self.toast(Tags::OK, format!("Added {name}"));
         if !is_link {
             self.predict_real_exe(id, path);
         }
@@ -802,8 +823,8 @@ impl State {
             .map_err(|e| e.to_string())
             .and_then(|s| std::fs::write(path, s).map_err(|e| e.to_string()))
         {
-            Ok(()) => self.toast(Tone::Ok, format!("Settings saved to {path}")),
-            Err(e) => self.toast(Tone::Error, format!("Could not save: {e}")),
+            Ok(()) => self.toast(Tags::OK, format!("Settings saved to {path}")),
+            Err(e) => self.toast(Tags::ERROR, format!("Could not save: {e}")),
         }
     }
 
@@ -816,9 +837,9 @@ impl State {
                 let (g, p) = (c.games.len(), c.presets.len());
                 *self.cfg_mut() = c;
                 self.mark_dirty();
-                self.toast(Tone::Ok, format!("Loaded {g} games and {p} presets"));
+                self.toast(Tags::OK, format!("Loaded {g} games and {p} presets"));
             }
-            Err(e) => self.toast(Tone::Error, e),
+            Err(e) => self.toast(Tags::ERROR, e),
         }
     }
 
@@ -947,7 +968,7 @@ mod tests {
         let (tx, rx) = channel();
         let status = Arc::new(StatusCell::new(Status::default()));
         let snap = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
-        (State::new(Config::default(), true, false, false, tx, status, snap, false), rx)
+        (State::new(Config::default(), true, None, false, "test", tx, status, snap, false), rx)
     }
 
     #[test]
@@ -1174,7 +1195,7 @@ mod tests {
 
         // Any config edit rebuilds it: deciding which fields a plan reads would be fragile, and the
         // rebuild is cheap compared with the frame that follows an edit.
-        st.apply(Intent::SetPref { skin: "classic", key: "boost_control", value: "gauge".into() });
+        st.apply(Intent::SetPref { key: "boost_control", value: "gauge".into() });
         let after_edit = st.view().boost.clone();
         assert!(!Arc::ptr_eq(&first, &after_edit));
 

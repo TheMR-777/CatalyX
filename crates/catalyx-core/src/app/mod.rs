@@ -13,6 +13,8 @@
 mod boost;
 mod intent;
 mod jobs;
+mod options;
+mod selftest;
 mod state;
 mod upkeep;
 mod view;
@@ -22,11 +24,22 @@ pub mod window;
 pub mod spec;
 
 pub use boost::{power_summary, NoticeKind, Plan};
-pub use intent::{Event, GameId, Hint, Intent, Interest, PresetId, Tone};
+pub use intent::{Event, GameId, Hint, Intent, Interest, PresetId};
+pub use options::{Options, Origin};
+pub use selftest::{CheckPage, Drawn};
 pub use spec::Target;
 pub use view::View;
 
-use crate::config::{Config, Game};
+// The types a View exposes, re-exported so a skin can name them without reaching into the core's
+// private modules. They are data a skin reads, never handles to Windows.
+pub use crate::engine::{LogLine, Phase, Status, Tags};
+pub use crate::gpu::{GpuState, Live};
+pub use crate::library::Installed;
+pub use crate::power::Plan as PowerPlan;
+pub use crate::procs::{ProcInfo, Snapshot};
+pub use crate::services::ServiceInfo;
+
+use crate::config::Config;
 use jobs::Job;
 use state::State;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -35,23 +48,15 @@ use std::time::{Duration, Instant};
 
 /// How the core starts.
 pub struct CoreOptions {
-    /// Never write the config (check runs and demos use a fresh default one).
-    pub no_save: bool,
-    /// Fill an empty library with sample games (screenshots of a fresh install).
-    pub demo: bool,
-    /// Pretend a boost is running (visual checks only; nothing is changed).
-    pub demo_session: bool,
-    /// The self-test drives this run.
-    pub selftest: bool,
-    /// A check run (screenshot, tour, self-test).
-    pub check_run: bool,
-    /// The skin's start-up adjustments to the loaded config (its check-run look flags). Applied once,
-    /// without marking the config for saving.
-    pub prepare: Option<ConfigEdit>,
+    /// What may be written and what is sampled: a normal run, a demo, or a check run.
+    pub origin: Origin,
+    /// The skin's name. Established once, here, so `Intent::SetPref` cannot write another skin's
+    /// choices; the core still never reads a preference.
+    pub skin: &'static str,
+    /// The skin's start-up preferences (its check-run look flags), stored verbatim and never marked
+    /// for saving. The skin validates them; the core does not interpret a key or a value.
+    pub prefs: Vec<(String, String)>,
 }
-
-/// A change to the config, made once.
-pub type ConfigEdit = Box<dyn FnOnce(&mut Config) + Send>;
 
 /// A cheap-to-clone handle to the core's state and threads.
 #[derive(Clone)]
@@ -129,17 +134,28 @@ impl Core {
         let snap = crate::procs::start_monitor();
         let (tx, status) = crate::engine::start(snap.clone());
         crate::trace::mark("monitor and engine started");
-        let mut cfg = if opts.no_save { Config::default() } else { Config::load() };
-        if opts.demo && cfg.games.is_empty() {
+        let (no_save, check_run, demo, session) = match &opts.origin {
+            Origin::User => (false, false, false, false),
+            Origin::Demo { session } => (true, false, true, *session),
+            Origin::Check { demo, session, .. } => (true, true, *demo, *session),
+        };
+        let mut cfg = if no_save { Config::default() } else { Config::load() };
+        if demo && cfg.games.is_empty() {
             state::demo_data(&mut cfg);
         }
-        if let Some(prepare) = opts.prepare {
-            prepare(&mut cfg);
+        for (key, value) in &opts.prefs {
+            // Start-up preferences are the skin's, stored verbatim and never marked for saving:
+            // a check run must not change what the person chose.
+            cfg.set_pref(opts.skin, key, value);
         }
-        if opts.demo_session {
+        if session {
             state::demo_session(&status);
         }
-        let st = State::new(cfg, opts.no_save, opts.selftest, opts.check_run, tx, status.clone(), snap, crate::ffi::is_admin());
+        let selftest = match &opts.origin {
+            Origin::Check { selftest: Some(path), .. } => Some(selftest::SelfTest::new(path.clone())),
+            _ => None,
+        };
+        let st = State::new(cfg, no_save, selftest, check_run, opts.skin, tx, status.clone(), snap, crate::ffi::is_admin());
         let (kick_tx, kick_rx) = channel();
         let inner = Arc::new(Inner { state: Mutex::new(st), wake: OnceLock::new(), kick: Arc::new(Mutex::new(kick_tx)) });
         // Everything that changes without the skin asking (engine stages, monitor samples, job
@@ -190,7 +206,21 @@ impl Core {
         self.inner.lock().take_events()
     }
 
-    /// The window is going away: save, and put a running boost back.
+    /// The page a self-test needs on screen next, or None outside one (`docs/SKINS.md`, Check runs).
+    pub fn selftest_page(&self) -> Option<CheckPage> {
+        self.inner.lock().selftest_page()
+    }
+
+    /// Advances the self-test by one window frame; true when its report is written and the program
+    /// should exit. Only a window in a check run calls this.
+    pub fn selftest_step(&self, drawn: Drawn) -> bool {
+        let mut st = self.inner.lock();
+        let done = st.selftest_step(drawn);
+        self.inner.release(st);
+        done
+    }
+
+    /// The window is going away: save, and wait briefly for a running boost to be put back.
     pub fn exit(&self) {
         let active = {
             let mut st = self.inner.lock();
@@ -202,21 +232,16 @@ impl Core {
             active
         };
         if active {
-            std::thread::sleep(Duration::from_millis(1500));
+            // Wait for the engine rather than sleeping blind: the journal is the safety net if the
+            // process ends before the restore finishes.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if !self.inner.lock().phase().active() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
-    }
-
-    /// The skin's self-test only: show the boost summary for this game whatever the "ask before boosting"
-    /// option says.
-    pub fn show_boost_summary(&self, game: Option<GameId>) {
-        let mut st = self.inner.lock();
-        st.show_boost_summary(game);
-        self.inner.release(st);
-    }
-
-    /// The skin's self-test only: adds its stand-in game (never saved) and selects it.
-    pub fn add_selftest_game(&self, game: Game) {
-        self.inner.lock().add_selftest_game(game);
     }
 }
 

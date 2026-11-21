@@ -8,7 +8,7 @@ use crate::gui::widgets::*;
 use crate::gui::{CatalyxApp, PickFor};
 use catalyx_core::app::spec;
 use catalyx_core::app::{window, Intent};
-use catalyx_core::{config, procs};
+use catalyx_core::{config, format};
 use egui::{vec2, RichText, Sense, Stroke, Ui};
 
 /// Opens CatalyX again with administrator rights (through the one-click task when it is set
@@ -84,7 +84,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         pal.text,
                     );
                     if resp.clicked() {
-                        app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::THEME, value: t.key().into() });
+                        app.send(Intent::SetPref { key: prefs::THEME, value: t.key().into() });
                     }
                     resp.on_hover_text(t.about());
                 }
@@ -111,7 +111,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if resp.on_hover_text(a.label()).clicked() {
-                        app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::ACCENT, value: a.key().into() });
+                        app.send(Intent::SetPref { key: prefs::ACCENT, value: a.key().into() });
                     }
                 }
             });
@@ -122,7 +122,7 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
             setting_row(ui, "Surface tint", "How much of the accent bleeds into the window, sidebar and cards", |ui| {
                 let mut i = (tint as usize).min(2);
                 if segmented(ui, 214.0, &mut i, &theme::TINT_LABELS) {
-                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::TINT, value: i.to_string() });
+                    app.send(Intent::SetPref { key: prefs::TINT, value: i.to_string() });
                 }
             });
             hairline(ui);
@@ -130,14 +130,14 @@ fn appearance(app: &mut CatalyxApp, ui: &mut Ui) {
                 let mut i = Style::ALL.iter().position(|s| *s == look.control).unwrap_or(0);
                 let labels: Vec<&str> = Style::ALL.iter().map(|s| s.label()).collect();
                 if segmented(ui, 280.0, &mut i, &labels) {
-                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::CONTROL, value: Style::ALL[i].key().into() });
+                    app.send(Intent::SetPref { key: prefs::CONTROL, value: Style::ALL[i].key().into() });
                 }
             });
             hairline(ui);
             setting_row(ui, "Mode", "Dark, light, or follow Windows", |ui| {
                 let mut i = Appearance::ALL.iter().position(|a| *a == look.appearance).unwrap_or(0);
                 if segmented(ui, 214.0, &mut i, &["Dark", "Light", "Windows"]) {
-                    app.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: Appearance::ALL[i].key().into() });
+                    app.send(Intent::SetPref { key: prefs::APPEARANCE, value: Appearance::ALL[i].key().into() });
                 }
             });
         },
@@ -274,7 +274,7 @@ fn about(app: &mut CatalyxApp, ui: &mut Ui) {
             ui.label(RichText::new("A lean game booster: no ads, no updater, no telemetry, no tray icon, nothing running in the background unless you turn the watcher on.").size(14.0));
             ui.add_space(4.0);
             let ws = app.v.system.own_working_set;
-            ui.label(faint(ui, format!("This window uses {} of memory right now.", procs::fmt_mem(ws)), 12.0));
+            ui.label(faint(ui, format!("This window uses {} of memory right now.", format::mem(ws)), 12.0));
             ui.label(faint(ui, "Every change is written to a recovery journal before it is made, and undone when the game closes - or with `catalyx restore` after a crash.", 12.0));
         },
     );

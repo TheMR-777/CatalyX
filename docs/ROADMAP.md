@@ -47,7 +47,7 @@ have not been checked elsewhere.
   than a number that quietly shrinks later.
 - **Boost state in the title bar** (a small pill by the meters, visible from every page), or the launch bar on
   every page rather than only on Boost. Mocked as idea 12 in the boost-control exploration.
-- **`windows-sys` for the Win32 bindings** in `ffi.rs`, `shell.rs`, `procs.rs`, `gpu.rs` (type-checked signatures,
+- **`windows-sys` for the Win32 bindings** in `ffi.rs`, `shell.rs`, `procs/`, `gpu.rs` (type-checked signatures,
   fewer hand-written mistakes). Mechanical, no behaviour change.
 - **Software-rendering option** for the window (no GPU driver, so about 20-30 MB less memory) at the cost of the
   soft look. Only worth it if footprint becomes the priority.

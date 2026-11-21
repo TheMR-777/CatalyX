@@ -1,11 +1,12 @@
 # Skins: the contract between the core and the window
 
-> **Status (2026-11-21).** This file is the reference for anyone writing a skin. It describes the contract as it is
-> today, and says plainly where it is still a target rather than a fact: **built** are the `Core` handle, `View`,
-> `Intent`/`Event`/`Hint`, and the preferences storage (`skins.<skin>`, validated in the skin); **not built** are
-> the `Skin` static, the shared `Spec` table for preferences, `view.prefs`, `catalyx skin`, `--pref`, and the split
-> of the core's self-test. Until then a skin is a crate that calls `app::Core` itself and is picked by the one line
-> in `app/src/main.rs`; the classic skin keeps its `--theme/--appearance/--accent/--control` aliases.
+> **Status (2026-11-21).** The contract below is what the code does. **Built**: the `Core` handle, `View`,
+> `Intent`/`Event`/`Hint`, `app::Options`/`Origin` (one parser for every window run), the preferences storage
+> (`skins.<skin>`, with the skin's name fixed once at start), and the whole self-test in the core (a skin shows
+> the page it asks for and reports what it drew). **Still a target**: the `Skin` static (today a skin is a crate
+> that calls `app::Core` and is picked by the one line in `app/src/main.rs`), the shared `Spec` table for skin
+> preferences, `view.prefs`, `catalyx skin` and `--pref`; the classic skin keeps its
+> `--theme/--appearance/--accent/--control` flags.
 
 ## What a skin is
 
@@ -25,8 +26,9 @@ switching, no plugin loader and no `dyn` indirection: the exe carries only the s
 
 ## The rules a skin lives by
 
-1. **A skin never changes Windows or the core's config itself.** It cannot: the core's Windows modules are private
-   to the core crate. Every change is an `Intent`.
+1. **A skin never changes Windows or the core's config itself.** It cannot: every Windows module, the engine and
+   the process actions are private modules of the core crate, so the compiler rejects the call. Every change is
+   an `Intent`.
 2. **Safety is the core's job.** Journal first, a summary before a boost (when the person wants one), restore never
    asks, never Realtime priority: all enforced in the core. A skin may show the summary however it likes, but it
    cannot start a boost without the core's say-so.
@@ -74,8 +76,8 @@ Kinds: `switch`, `choice` (each value: key, label, hint), `number` (min, max, st
 What the core does with them, and nothing more:
 - **Stores** them in the config under the skin's name (`skins: { "classic": { "accent": "ember", ... } }`), so a
   different skin never reads or clobbers another's choices.
-- **Validates** a change against the spec (`Intent::SetPref { key, value }`); a stored value that the skin no longer
-  accepts reads as the default.
+- **Stores** a change sent as `Intent::SetPref { key, value }` under the skin's name, fixed once in
+  `CoreOptions::skin`; a stored value that the skin no longer accepts reads as the default.
 - **Shows** them in the View (`view.prefs.choice("accent")`, `.switch("motion")`, `.number(..)`, ...).
 - **Exposes them on the command line** with no skin-specific code: `catalyx skin` lists them, `catalyx skin set
   accent ember` sets one, and `catalyx theme ember ring light` (the existing command) matches each word against the
@@ -101,6 +103,10 @@ impl Core {
     pub fn take_events(&self) -> Vec<Event>;
     /// What is on screen, minimised, closing.
     pub fn hint(&self, hint: Hint);
+    /// A self-test: the page it needs shown, and one frame of it (true when the report is written
+    /// and the program should exit). See "Check runs".
+    pub fn selftest_page(&self) -> Option<CheckPage>;
+    pub fn selftest_step(&self, drawn: Drawn) -> bool;
 }
 ```
 
@@ -110,20 +116,21 @@ The waker is stored once (behind an `Arc`); it is called only when the view chan
 
 | Section | Contents | Changes when |
 |---|---|---|
-| `rev: u64` | bumps on any change; a skin may skip work when it has not moved | any change |
-| `config: Arc<Config>` | the saved config, read-only (games, presets, rules, options). Helper queries: `settings_for(game)`, `apps_for`, `services_for`, `app_action(scope, exe)`, `service_stopped(scope, name)`, `profile_label(game)` | an intent edits it |
-| `prefs: Arc<Prefs>` | this skin's preferences, validated against its spec | `SetPref` |
-| `session: Arc<Session>` | phase, game name/id/pid/exe, counts (before/after memory and clock, apps closed/paused/lowered, services stopped...), the activity log (`LogLine`s, below), `pending_journal`, `quiet_desktop` | the engine reports |
-| `boost: Arc<BoostView>` | the selected game's name and profile label, whether there is a game, the stages and whether each is done, a 0..1 progress estimate, the plan ("This boost will" lines + how many options are off), and the notices to show (interrupted boost, not administrator, nothing chosen, no game). The core supplies the facts and the plan's final text; the headline wording around a control is the skin's | config, session or service-list changes |
-| `meters: Meters` | CPU %, memory used/total, GPU %, CPU name/cores/clock/base clock, `ready` | each monitor sample |
-| `apps: Arc<Vec<AppRow>>` | running programs grouped by exe (name, category, count, CPU, memory, GPU, protected) plus rule-only rows | each detailed sample, only while `Interest::Processes` |
-| `services: Arc<Vec<ServiceRow>>` | name, display name, running, can_stop, **can_start (cached, not asked per frame)**, catalogue entry (why, impact, recommended), protected | refreshed while `Interest::Services` |
-| `hardware: Arc<Hardware>` | graphics card (name, vendor, supported, clock ranges, note), planned offsets per level, power plans and the active one, live card readings (`Interest::GpuLive`), CatalyX's own memory (`Interest::OwnUsage`) | probes finish / live ticks |
-| `system` | `admin`, elevation state `(one-click task, watcher)` (`Interest::Elevation`), version | rarely |
-| `library` | installed-games scan result, real-program candidates per game id, and the busy flags (`scanning`, `probing`...) | jobs finish |
+| `config: Arc<Config>` | the saved config, read-only (games, presets, rules, options, `skins`). Helper queries: `pref(skin, key)`, `settings_for(game)`, `apps_for`, `services_for`, `app_action(scope, exe)`, `service_stopped(scope, name)`, `profile_label(game)` | an intent edits it |
+| `status: Arc<Status>` | phase, game name/id/pid/exe, counts (before/after memory and clock, apps closed/paused/lowered, services stopped...), the activity log (`LogLine`s, below), `pending_journal`, `quiet_desktop`, `learned` | the engine reports |
+| `snap: Arc<Snapshot>` | one monitor sample: CPU %, memory used/total, GPU %, CPU name/cores/clock/base clock, the process list (`ProcInfo`), and `detailed` (whether that list was freshly scanned). Shared, never copied | each monitor sample |
+| `boost: Arc<BoostView>` | the stages and whether each is done, a 0..1 progress estimate, the plan ("This boost will" lines + how many options are off), and the notices to show (interrupted boost, not administrator, nothing chosen, no game). The core supplies the facts and the plan's final text; the headline wording around a control is the skin's | config, status or service-list changes |
+| `services: Arc<Vec<ServiceInfo>>` | name, display name, running, can_stop, **can_start (cached, not asked per frame)**, and `View::service_stops(name, chosen)` for the one rule every page shares | refreshed while `Interest::Services` |
+| `hardware: Arc<Hardware>` | graphics card (name, vendor, supported, clock ranges, note) and `level_hint(level)`, power plans, live card readings (`Interest::GpuLive`) | probes finish / live ticks |
+| `system: System` | `admin`, `version`, elevation state `(one-click task, watcher)` (`Interest::Elevation`), `own_working_set` (`Interest::OwnUsage`) | rarely |
+| `library: Library` | installed-games scan result, real-program candidates per game id, and the `scanning` flag | jobs finish |
+
+The skin's own preferences are not a view section: the core never interprets them, so a skin reads its saved
+values with `view.config.pref(<its name>, key)` and its own defaults (the classic skin does this in
+`prefs.rs`). Grouping the process list into rows is the skin's business; `snap` is the raw sample.
 
 `BoostView` describes the boost, not a control: a skin may draw a dial, a launch bar, a list of stages, or
-show only the plan. `busy` and `boosted` are not separate fields; they follow from `session.phase`.
+show only the plan. `busy` and `boosted` are not separate fields; they follow from `status.phase`.
 
 Games and presets are referred to by **id** everywhere in the API, never by list index (indexes go stale when
 something is removed).
@@ -150,14 +157,14 @@ front-end that only prints text (the command line) needs no tags at all.
 | Group | Intents |
 |---|---|
 | Boost | `Boost { game: Option<GameId> }` (None = gaming mode without a game), `ConfirmBoost { game: Option<GameId>, dont_ask_again: bool }` (the core accepts it only for the game whose summary was shown), `CancelBoost`, `Restore`, `ExitQuietDesktop` |
-| Games | `SelectGame(id)`, `AddGame { path, name, args }`, `AddInstalled(Vec<Installed>)`, `RemoveGame(id)`, `EditGame { id, name, launch, args }`, `SetRealProgram { id, exe: Option<String> }`, `SetGameProfile { id, preset }`, `GiveGameOwnSettings(id)`, `FollowPreset(id)`, `ScanLibrary`, `FindCandidates(id)` |
+| Games | `SelectGame { id }`, `AddGame { path, name, args, real_exe }`, `RemoveGame { id }`, `EditGame { id, name, launch, args }`, `SetRealProgram { id, exe: Option<String> }`, `SetGameProfile { id, preset }`, `GiveGameOwnSettings { id }`, `FollowPreset { id }`, `ScanLibrary`, `HideInstalled`, `FindCandidates { id, folder }` |
 | Profiles | `NewPreset { from: Target }`, `RenamePreset { id, name }`, `DeletePreset(id)`, `ResetPreset(id)`, `SetDefaultPreset(id)`, `SetSetting { target: Target, key, value }` (keys from the catalogue below) |
-| Apps | `SetAppRule { scope: Option<GameId>, exe, action }`, `UseSuggestedApps`, `ClearAppRules`, `EndAppNow { exe }` |
-| Services | `SetServiceRule { scope, name, stop }`, `UseRecommendedServices`, `ClearServiceRules`, `RefreshServices` |
-| Tuning | `RefreshHardware`, `UsePowerPlan(guid)`, `BuildCatalyxPlan`, `SetHeatLimit(u32)`, `TestGraphicsCard` |
+| Apps | `SetAppRule { scope: Option<GameId>, exe, action }`, `UseSuggestedApps { scope }`, `ClearAppRules`, `EndApp { exe, name }` |
+| Services | `SetServiceRule { scope, name, stop }`, `UseRecommendedServices { scope }`, `ClearServiceRules`, `UseSuggestions { scope }` |
+| Tuning | `RefreshHardware`, `UsePowerPlan { guid }`, `CreateBoostPlan { level }`, `SetHeatLimit { c }` (only 75/80/83/87), `TestGraphicsCard` |
 | Options | `SetOption { key, value }` (restore when the game closes, keep apps off, reopen closed apps, ask before boosting, auto-boost, open as administrator) |
 | System | `FinishWelcome { use_suggestions }`, `SetupOneClickStart`, `RemoveOneClickStart`, `SetWatcher(bool)`, `RelaunchAsAdmin`, `ExportConfig(path)`, `ImportConfig(path)`, `ResetConfig` |
-| Skin | `SetPref { skin: &'static str, key: &'static str, value: String }` - saved under `skins.<skin>`, the skin's own name; the core stores the value verbatim and reads none of it (the classic skin's five look fields live there now, validated in `skins/classic/src/gui/prefs.rs`) |
+| Skin | `SetPref { key: &'static str, value: String }` - saved under `skins.<skin>`, the name the skin gave in `CoreOptions::skin`; the core stores the value verbatim and reads none of it (the classic skin's five look fields live there, validated in `skins/classic/src/gui/prefs.rs`) |
 
 Confirmation dialogs for ordinary destructive actions (remove a game, reset settings, end an app, clear rules, the
 graphics test) are the skin's UX: it asks, then sends the intent. The one confirmation that is *policy* (the summary
@@ -167,10 +174,10 @@ before a boost) belongs to the core.
 
 | Event | Meaning |
 |---|---|
-| `ConfirmBoost(Plan)` | the person asked to boost and wants a summary first: show it, then send `ConfirmBoost` or `CancelBoost` |
-| `Toast { tone, text }` | a short message (added, saved, failed, learned the real game program...) |
+| `ConfirmBoost { game, plan }` | the person asked to boost and wants a summary first: show this plan for this game, then send `ConfirmBoost` or `CancelBoost` |
+| `Toast { tone, text }` | a short message (added, saved, failed, learned the real game program...). `tone` uses the same `Tags` as the log: `OK`, `WARN`, `ERROR`, or none for a plain message |
 | `ReadyToClose` | after `Hint::CloseRequested`: everything is restored and saved; close the window now |
-| `Exit` | the program is restarting (as administrator): close at once |
+| `ReadyToQuit` | the program is restarting (as administrator): close at once |
 
 ### Hint (the skin tells the core)
 
@@ -208,9 +215,9 @@ administrator, ask before boosting).
 
 ### Window helpers
 
-A small public module in the core, `catalyx_core::window`, so a skin needs no `unsafe` of its own: the native file
-dialog, borderless-window styling (rounded corners and shadow on Windows 11), the title-bar colours, "does Windows
-prefer dark", and opening a folder in Explorer. They find the window by its title, so a skin's window must be titled
+`catalyx_core::app::window` is what a skin needs without `unsafe` of its own: the native file dialog, borderless
+window styling (rounded corners and shadow on Windows 11), `system_prefers_dark`, opening a folder in Explorer, and
+`EXIT_KEYS` (the Quiet desktop shortcut text). They find the window by its title, so a skin's window must be titled
 `CatalyX`. They change nothing outside the window.
 
 ### What data exists (design against this, nothing else)
@@ -226,12 +233,17 @@ samples is a planned addition for the next skin).
 
 ## Check runs
 
-`--screenshot`, `--tour` and `--self-test` stay. The argument parsing is the core's; `SkinOptions` carries what a
-skin needs (page, size, dialog, demo flags) and `--pref key=value` sets any skin preference for the run (replacing
-today's `--theme`, `--accent`, `--appearance`, `--control`, which the classic skin keeps as aliases). The self-test
-splits: the boost/restore part (a stand-in game, priority read back from Windows) runs in the core with no window;
-the skin keeps the visual part (what was drawn). In check runs the core's demo mode supplies steady readings (today's
-live graphics-card line is not steady, which makes those screenshots differ between runs).
+`--screenshot`, `--tour` and `--self-test` are the core's: `app::Options::from_args` parses them once, and its
+`Origin` says whether the run may save (`User`), is sample data (`Demo`) or is a check run (`Check`). `start::prepare_window`
+then sets up the scratch data folder, the watchdog and the elevation decision, so the program and the skin cannot
+disagree about a flag. A skin's own flags (`--tab`, `--theme`, `--dialog`, ...) stay in `Options::rest`; the classic
+skin reads them from there.
+
+The self-test is headless in the core: it makes the stand-in `.bat` game, boosts it, reads the priority back from
+Windows, restores, cleans up and writes the report. A skin does two things: show the page `Core::selftest_page()`
+asks for, and call `Core::selftest_step(Drawn { apps, games, boost })` once per frame, saying which of its pages it
+has drawn. It exits when that returns true. In check runs the core's demo mode supplies steady readings (the live
+graphics-card line is not steady, which is why those screenshots differ between runs).
 
 ## Decided (2026-11-15)
 
@@ -239,5 +251,5 @@ live graphics-card line is not steady, which makes those screenshots differ betw
 2. **Skin preferences** are declared by the skin and stored per skin; the core knows no theme, accent or control
    style. Done: the classic skin's five look fields live under `skins.classic` at the same config version, so a
    file without them simply loads with that skin's defaults (no migration code, see DECISIONS.md).
-3. **Window helpers** live in `catalyx_core::window`.
+3. **Window helpers** live in `catalyx_core::app::window`.
 4. **Log lines carry tags**, several per line, in a bit set that can grow.

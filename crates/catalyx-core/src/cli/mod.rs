@@ -176,7 +176,7 @@ impl Cli {
                     .trim_end_matches(|c: char| !c.is_ascii_digit())
                     .parse()
                     .map_err(|_| "temperature must be a number")?;
-                if ![75, 80, 83, 87].contains(&v) {
+                if !config::HEAT_LIMITS.contains(&v) {
                     return Err("heat limit must be 75, 80, 83 or 87".into());
                 }
                 let mut cfg = Config::load();

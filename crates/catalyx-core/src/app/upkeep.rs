@@ -6,9 +6,9 @@
 //! sleeps until then or until a kick (an intent, a hint, a job result, an engine status change, a
 //! monitor sample).
 
-use super::intent::{Event, Tone};
+use super::intent::Event;
 use super::state::State;
-use crate::engine::{Cmd, Phase};
+use crate::engine::{Cmd, Phase, Tags};
 use crate::{ffi, gpu, procs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -121,7 +121,7 @@ impl State {
         }
         // Footprint: hand back memory the window is not using right now (driver and font pages that
         // were only needed while drawing). They come back on demand, a few at a time.
-        if !self.selftest {
+        if self.selftest.is_none() {
             if now >= self.last_trim + TRIM_EVERY {
                 self.last_trim = now;
                 procs::trim(std::process::id());
@@ -152,7 +152,7 @@ impl State {
             if let Some(i) = self.cfg.games.iter().position(|g| g.id == gid) {
                 if self.cfg.games[i].real_exe != exe {
                     self.cfg_mut().games[i].real_exe = exe.clone();
-                    self.toast(Tone::Ok, format!("Learned the real game program: {exe}"));
+                    self.toast(Tags::OK, format!("Learned the real game program: {exe}"));
                     self.mark_dirty();
                 }
             }
@@ -185,7 +185,7 @@ impl State {
             let g = self.cfg.games[i].clone();
             let req = self.request_for(Some(&g), Some(pid));
             let _ = self.tx.send(Cmd::Boost(Box::new(req)));
-            self.toast(Tone::Info, format!("{} started - boosting automatically", g.name));
+            self.toast(Tags::NONE, format!("{} started - boosting automatically", g.name));
         }
     }
 }
@@ -211,7 +211,7 @@ mod tests {
         let (tx, _rx) = channel();
         let status = Arc::new(StatusCell::new(Status::default()));
         let snap = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
-        State::new(Config::default(), true, false, false, tx, status, snap, false)
+        State::new(Config::default(), true, None, false, "test", tx, status, snap, false)
     }
 
     #[test]

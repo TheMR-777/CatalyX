@@ -1,7 +1,7 @@
 //! The CatalyX mark: an X woven from two rounded strokes. The rising "/" (the boost) is in the accent
 //! and passes over the "\" with a thin gap where they cross. One geometry, three uses: the tile in the
 //! title bar (`paint`), the window and taskbar icon (`icon_rgba`), and the program's own icon
-//! (`ico_bytes`, written to assets/catalyx.ico by `catalyx --write-icon`).
+//! (`ico_bytes`, written to app/assets/catalyx.ico by `catalyx --write-icon`).
 
 use egui::{Color32, Painter, Pos2, Stroke};
 

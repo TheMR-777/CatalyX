@@ -453,7 +453,7 @@ impl Engine {
         std::thread::sleep(Duration::from_millis(400));
         sys.refresh_memory();
         let freed = before.saturating_sub(sys.used_memory());
-        self.log(Tags::MEMORY, format!("Freed {} of memory from {n} apps", procs::fmt_mem(freed)));
+        self.log(Tags::MEMORY, format!("Freed {} of memory from {n} apps", crate::format::mem(freed)));
         self.counts(|c| c.ram_freed += freed);
     }
 

@@ -1,6 +1,7 @@
 //! The window's own chrome: the title bar (brand, page title, live meters, window buttons) and the sidebar.
 
 use super::*;
+use catalyx_core::format;
 
 impl CatalyxApp {
     pub(super) fn sidebar(&mut self, ui: &mut egui::Ui, compact: bool) {
@@ -71,7 +72,7 @@ impl CatalyxApp {
                             let (i, tip) = if self.dark_mode() { (Ico::Sun, "Switch to light") } else { (Ico::Moon, "Switch to dark") };
                             if widgets::icon_button(ui, i, tip).clicked() {
                                 let next = if self.dark_mode() { prefs::Appearance::Light } else { prefs::Appearance::Dark };
-                                self.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: next.key().into() });
+                                self.send(Intent::SetPref { key: prefs::APPEARANCE, value: next.key().into() });
                             }
                         });
                     });
@@ -94,7 +95,7 @@ impl CatalyxApp {
         let (_, title, sub, _) = TABS.iter().find(|(t, ..)| *t == self.tab).copied().unwrap();
         let s = (self.v.snap.cpu_total, self.v.snap.mem_used, self.v.snap.mem_total, self.v.snap.gpu_total, self.v.snap.serial);
         // Screenshots show steady, believable meters, not whatever this PC happens to be doing right then.
-        let s = if self.opts.screenshot.is_some() || self.opts.tour.is_some() {
+        let s = if self.opts.run.screenshot.is_some() || self.opts.run.tour.is_some() {
             const GIB: f64 = 1_073_741_824.0;
             (23.0, (5.7 * GIB) as u64, (15.9 * GIB) as u64, 6.0, 3)
         } else {
@@ -150,7 +151,7 @@ impl CatalyxApp {
                         } else if win_w < 1000.0 {
                             format!("{:.0}%", mem_frac * 100.0)
                         } else {
-                            format!("{} / {}", procs::fmt_mem(used), procs::fmt_mem(total))
+                            format!("{} / {}", format::mem(used), format::mem(total))
                         },
                         mem_frac,
                     ),

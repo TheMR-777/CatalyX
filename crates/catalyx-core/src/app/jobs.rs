@@ -1,9 +1,10 @@
 //! Slow work runs on short-lived threads (one per job, as the window did before); each result is stored
 //! in the State by `State::finish` and wakes the skin.
 
-use super::intent::{Event, Tone};
+use super::intent::Event;
 use super::state::State;
 use crate::config::CpuLevel;
+use crate::engine::Tags;
 use crate::{elevate, ffi, gpu, launcher, library, power, services};
 use std::sync::Arc;
 use std::time::Instant;
@@ -112,7 +113,7 @@ impl State {
     /// Runs a CatalyX command as administrator (one prompt) off the UI thread and reports back.
     pub(super) fn run_elevated(&mut self, args: &'static str, done: &'static str) {
         let admin = self.system.admin;
-        self.toast(Tone::Info, if admin { "Working..." } else { "Approve the Windows prompt to continue" });
+        self.toast(Tags::NONE, if admin { "Working..." } else { "Approve the Windows prompt to continue" });
         self.spawn(move || {
             let ok = if admin { ffi::run_self_as_current(args) } else { ffi::run_self_elevated_and_wait(args, 120_000) };
             Some(if ok {
@@ -170,12 +171,12 @@ impl State {
                 Arc::make_mut(&mut self.library).candidates.insert(id, list);
             }
             Done::Info(s) => {
-                self.toast(Tone::Info, s);
+                self.toast(Tags::NONE, s);
                 // A finished administrator job may have changed the tasks.
                 self.system.elevation = None;
             }
             Done::Error(s) => {
-                self.toast(Tone::Error, s);
+                self.toast(Tags::ERROR, s);
                 self.system.elevation = None;
             }
             Done::Elevation { ui_task, watcher } => {
@@ -183,27 +184,27 @@ impl State {
                 self.system.elevation_busy = false;
             }
             Done::EndedApp { name, count } => {
-                self.toast(Tone::Info, format!("Ended {count} process(es) of {name}"));
+                self.toast(Tags::NONE, format!("Ended {count} process(es) of {name}"));
             }
             Done::Relaunch(started) => {
                 if started {
                     self.event(Event::ReadyToQuit);
                 } else {
-                    self.toast(Tone::Error, "The administrator prompt was cancelled");
+                    self.toast(Tags::ERROR, "The administrator prompt was cancelled");
                 }
             }
             Done::PowerChanged { ok, created } => {
                 if created {
                     if ok {
-                        self.toast(Tone::Ok, "CatalyX plan is ready");
+                        self.toast(Tags::OK, "CatalyX plan is ready");
                     } else {
-                        self.toast(Tone::Error, "Windows would not create the plan");
+                        self.toast(Tags::ERROR, "Windows would not create the plan");
                     }
                     self.refresh_hardware();
                 } else if ok {
                     self.refresh_hardware();
                 } else {
-                    self.toast(Tone::Error, "Windows refused the change");
+                    self.toast(Tags::ERROR, "Windows refused the change");
                 }
             }
         }

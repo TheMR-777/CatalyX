@@ -127,7 +127,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, _w: f32) {
     let f = app.ui.svc.filter.trim().to_lowercase();
     let view = app.ui.svc.view;
     let all = app.v.services.clone();
-    let mut rows: Vec<&catalyx_core::services::ServiceInfo> = all
+    let mut rows: Vec<&catalyx_core::app::ServiceInfo> = all
         .iter()
         .filter(|s| {
             let by_view = match view {
@@ -162,7 +162,7 @@ fn list(app: &mut CatalyxApp, ui: &mut Ui, game: Option<usize>, _w: f32) {
     });
 }
 
-fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &catalyx_core::services::ServiceInfo, game: Option<usize>, width: f32, h: f32) {
+fn row(app: &mut CatalyxApp, ui: &mut Ui, s: &catalyx_core::app::ServiceInfo, game: Option<usize>, width: f32, h: f32) {
     let p = app.pal();
     let (rect, _) = flat_row(ui, width, h);
     let on = effective(app, game, &s.name);

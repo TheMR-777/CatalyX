@@ -11,7 +11,7 @@ use super::theme::{alpha, mix, pal};
 use super::widgets::*;
 use super::CatalyxApp;
 use catalyx_core::app::Intent;
-use catalyx_core::engine::{Phase, Status};
+use catalyx_core::app::{Phase, Status};
 use egui::{pos2, vec2, Align, Align2, FontId, Id, Layout, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use std::f32::consts::{PI, TAU};
 

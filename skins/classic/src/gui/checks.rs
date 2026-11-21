@@ -6,7 +6,7 @@ impl CatalyxApp {
     pub(super) fn run_checks(&mut self, ctx: &Context) {
         self.frames += 1;
         // The tour walks every page and both modes, saving a picture of each.
-        if let Some(dir) = self.opts.tour.clone() {
+        if let Some(dir) = self.opts.run.tour.clone() {
             const SETTLE: u32 = 14;
             let steps: Vec<(Tab, bool)> = TABS.iter().flat_map(|(t, ..)| [(*t, true), (*t, false)]).collect();
             if self.frames % SETTLE == 1 && !self.shot_requested {
@@ -16,7 +16,7 @@ impl CatalyxApp {
                 let (t, dark) = steps[self.tour_step];
                 self.tab = t;
                 let look = if dark { prefs::Appearance::Dark } else { prefs::Appearance::Light };
-                self.send(Intent::SetPref { skin: prefs::NAME, key: prefs::APPEARANCE, value: look.key().into() });
+                self.send(Intent::SetPref { key: prefs::APPEARANCE, value: look.key().into() });
             }
             if self.frames % SETTLE == SETTLE - 2 && !self.shot_requested {
                 self.shot_requested = true;
@@ -44,7 +44,7 @@ impl CatalyxApp {
             ctx.request_repaint_after(Duration::from_millis(40));
             return;
         }
-        if let Some(path) = self.opts.screenshot.clone() {
+        if let Some(path) = self.opts.run.screenshot.clone() {
             // Enough frames to have drawn everything, and enough time for the layout to settle: a
             // page whose content is still finding its height shows a scroll bar on some runs and not
             // on others, at exactly the same frame count.
